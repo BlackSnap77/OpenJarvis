@@ -245,16 +245,18 @@ class WorkflowEngine:
         """Execute a tool node."""
         tool_name = node.config.get("tool_name", "")
         tool_args = node.config.get("tool_args", "{}")
-        if system and system.tool_executor:
+
+        if system and system.secure_tool_gateway:
             from openjarvis.core.types import ToolCall
 
             tc = ToolCall(id=f"wf_{node.id}", name=tool_name, arguments=tool_args)
-            tr = system.tool_executor.execute(tc)
+            tr = system.secure_tool_gateway.execute(tc)
             return WorkflowStepResult(
                 node_id=node.id,
                 success=tr.success,
                 output=tr.content,
             )
+
         return WorkflowStepResult(
             node_id=node.id,
             success=False,
