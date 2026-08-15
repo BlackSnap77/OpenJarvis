@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from openjarvis.agents._stubs import BaseAgent
@@ -28,6 +28,9 @@ class SecurityContext:
     capability_policy: Optional[CapabilityPolicy] = None
     audit_logger: Optional[AuditLogger] = None
     boundary_guard: Optional[BoundaryGuard] = None
+    policy_enforcer: Optional[Any] = None
+    confirmation_manager: Optional[Any] = None
+    secure_tool_gateway: Optional[Any] = None
 
 
 @dataclass

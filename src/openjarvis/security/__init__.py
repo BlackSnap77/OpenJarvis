@@ -38,6 +38,7 @@ class SecurityContext:
     audit_logger: Any = None
     policy_enforcer: Any = None
     confirmation_manager: Any = None
+    secure_tool_gateway: Any = None
 
 
 def setup_security(

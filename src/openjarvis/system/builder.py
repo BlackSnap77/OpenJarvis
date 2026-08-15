@@ -12,6 +12,7 @@ from openjarvis.core.paths import get_config_dir
 from openjarvis.engine._stubs import InferenceEngine
 from openjarvis.system.core import JarvisSystem
 from openjarvis.tools._stubs import BaseTool, ToolExecutor
+from openjarvis.tools.secure_gateway import SecureToolGateway
 
 logger = logging.getLogger(__name__)
 
@@ -326,6 +327,16 @@ class SystemBuilder:
             except Exception as exc:
                 logger.warning("Failed to initialize speech backend: %s", exc)
 
+        secure_tool_gateway = None
+        if tool_executor is not None:
+            secure_tool_gateway = SecureToolGateway(
+                tool_executor,
+                policy_enforcer=sec.policy_enforcer,
+                confirmation_manager=sec.confirmation_manager,
+                audit_logger=sec.audit_logger,
+            )
+            sec.secure_tool_gateway = secure_tool_gateway
+
         system = JarvisSystem(
             config=config,
             bus=bus,
@@ -353,6 +364,7 @@ class SystemBuilder:
             audit_logger=sec.audit_logger,
             policy_enforcer=sec.policy_enforcer,
             confirmation_manager=sec.confirmation_manager,
+            secure_tool_gateway=secure_tool_gateway,
             speech_backend=speech_backend,
             skill_manager=skill_manager,
         )

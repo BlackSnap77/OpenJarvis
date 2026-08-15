@@ -80,6 +80,7 @@ class JarvisSystem:
     boundary_guard: Optional[BoundaryGuard] = None
     policy_enforcer: Optional[Any] = None
     confirmation_manager: Optional[Any] = None
+    secure_tool_gateway: Optional[Any] = None
     operator_manager: Optional[OperatorManager] = None
     agent_manager: Optional[AgentManager] = None
     agent_scheduler: Optional[AgentScheduler] = None
@@ -99,6 +100,8 @@ class JarvisSystem:
             audit_logger=self.audit_logger,
             boundary_guard=self.boundary_guard,
             policy_enforcer=self.policy_enforcer,
+            confirmation_manager=self.confirmation_manager,
+            secure_tool_gateway=self.secure_tool_gateway,
         )
 
     @property
