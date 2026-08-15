@@ -35,6 +35,11 @@ class SecurityEventType(str, Enum):
     PII_DETECTED = "pii_detected"
     SENSITIVE_FILE_BLOCKED = "sensitive_file_blocked"
     TOOL_BLOCKED = "tool_blocked"
+    CONFIRMATION_REQUESTED = "confirmation_requested"
+    CONFIRMATION_APPROVED = "confirmation_approved"
+    CONFIRMATION_REJECTED = "confirmation_rejected"
+    CONFIRMATION_EXPIRED = "confirmation_expired"
+    CONFIRMATION_EXECUTED = "confirmation_executed"
 
 
 # ---------------------------------------------------------------------------

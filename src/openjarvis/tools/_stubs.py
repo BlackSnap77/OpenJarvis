@@ -108,6 +108,7 @@ class ToolExecutor:
         agent_id: str = "",
         boundary_guard: Optional[Any] = None,
         policy_enforcer: Optional[Any] = None,
+        confirmation_manager: Optional[Any] = None,
     ) -> None:
         self._tools: Dict[str, BaseTool] = {t.spec.name: t for t in tools}
         self._bus = bus
@@ -118,6 +119,77 @@ class ToolExecutor:
         self._agent_id = agent_id
         self._boundary_guard = boundary_guard
         self._policy_enforcer = policy_enforcer
+        self._confirmation_manager = confirmation_manager
+        # Pop-on-use authorizations are only inserted by ``confirm_action``.
+        # A caller-provided ToolCall id alone can therefore never bypass policy.
+        self._approved_action_fingerprints: Dict[str, str] = {}
+
+    def confirm_action(self, action_id: str, fingerprint: str) -> ToolResult:
+        """Execute the one immutable action identified by a user confirmation.
+
+        The regular ``execute`` path is deliberately reused.  This means the
+        policy is checked again immediately before dispatch and no second
+        executor or tool bypass is introduced.
+        """
+        if self._confirmation_manager is None:
+            return ToolResult(
+                tool_name="confirmation",
+                content="Confirmation manager is not configured.",
+                success=False,
+            )
+        try:
+            action = self._confirmation_manager.approve(action_id, fingerprint)
+            params = json.loads(action.canonical_arguments)
+        except Exception as exc:
+            return ToolResult(
+                tool_name="confirmation",
+                content=f"Confirmation rejected: {exc}",
+                success=False,
+            )
+
+        # This one-time token is verified and consumed by ``execute`` after
+        # its second PolicyEnforcer check.  The persisted action arguments,
+        # rather than caller-provided arguments, are always dispatched.
+        self._approved_action_fingerprints[action.action_id] = action.fingerprint
+        result = self.execute(
+            ToolCall(
+                id=action.action_id,
+                name=action.tool_name,
+                arguments=action.canonical_arguments,
+            )
+        )
+        try:
+            self._confirmation_manager.mark_executed(
+                action.action_id,
+                success=result.success,
+            )
+        except Exception:
+            # The execution result is authoritative; auditing is best effort.
+            pass
+        return result
+
+    def reject_action(self, action_id: str) -> ToolResult:
+        """Record an explicit user rejection without executing a tool."""
+        if self._confirmation_manager is None:
+            return ToolResult(
+                tool_name="confirmation",
+                content="Confirmation manager is not configured.",
+                success=False,
+            )
+        try:
+            action = self._confirmation_manager.reject(action_id)
+        except Exception as exc:
+            return ToolResult(
+                tool_name="confirmation",
+                content=f"Confirmation rejected: {exc}",
+                success=False,
+            )
+        return ToolResult(
+            tool_name=action.tool_name,
+            content=f"Tool '{action.tool_name}' execution rejected by user.",
+            success=False,
+            metadata={"action_id": action.action_id, "status": action.status.value},
+        )
 
     def execute(self, tool_call: ToolCall) -> ToolResult:
         """Parse arguments, dispatch to tool, measure latency, emit events."""
@@ -160,6 +232,49 @@ class ToolExecutor:
                     content=f"Policy check failed: {exc}",
                     success=False,
                 )
+
+            if decision.requires_confirmation():
+                if self._confirmation_manager is None:
+                    return ToolResult(
+                        tool_name=tool_call.name,
+                        content=(
+                            f"Tool '{tool_call.name}' requires confirmation "
+                            "but no confirmation manager is configured."
+                        ),
+                        success=False,
+                    )
+                canonical_arguments = self._confirmation_manager.canonicalize_arguments(
+                    params
+                )
+                expected_fingerprint = self._confirmation_manager.fingerprint_for(
+                    tool_call.name,
+                    canonical_arguments,
+                )
+                approved_fingerprint = self._approved_action_fingerprints.pop(
+                    tool_call.id,
+                    None,
+                )
+                if approved_fingerprint != expected_fingerprint:
+                    action = self._confirmation_manager.create(
+                        tool_call.name,
+                        params,
+                    )
+                    return ToolResult(
+                        tool_name=tool_call.name,
+                        content=(
+                            f"Confirmation required for tool '{tool_call.name}'. "
+                            f"action_id={action.action_id}"
+                        ),
+                        success=False,
+                        metadata={
+                            "action_id": action.action_id,
+                            "fingerprint": action.fingerprint,
+                            "created_at": action.created_at.isoformat(),
+                            "expires_at": action.expires_at.isoformat(),
+                            "status": action.status.value,
+                            "canonical_arguments": action.canonical_arguments,
+                        },
+                    )
 
         # Boundary guard: scan external tool arguments
         if self._boundary_guard is not None and not getattr(tool, "is_local", True):

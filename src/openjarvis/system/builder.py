@@ -216,6 +216,7 @@ class SystemBuilder:
                 tool_list,
                 bus,
                 policy_enforcer=sec.policy_enforcer,
+                confirmation_manager=sec.confirmation_manager,
             )
             if tool_list
             else None
@@ -248,6 +249,7 @@ class SystemBuilder:
                         tool_list,
                         bus,
                         policy_enforcer=sec.policy_enforcer,
+                        confirmation_manager=sec.confirmation_manager,
                     )
                 skill_few_shot_examples = skill_manager.get_few_shot_examples()
             except Exception as exc:
@@ -350,6 +352,7 @@ class SystemBuilder:
             capability_policy=capability_policy,
             audit_logger=sec.audit_logger,
             policy_enforcer=sec.policy_enforcer,
+            confirmation_manager=sec.confirmation_manager,
             speech_backend=speech_backend,
             skill_manager=skill_manager,
         )

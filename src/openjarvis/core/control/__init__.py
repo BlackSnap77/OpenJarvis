@@ -14,12 +14,22 @@ from .policy import (
 )
 
 from .decision import PolicyDecision
+from .confirmation import (
+    ActionStatus,
+    ConfirmationError,
+    ConfirmationManager,
+    PendingAction,
+)
 from .enforcer import PolicyEnforcer
 from .turn_tracker import TurnTracker
 
 
 __all__ = [
     "PolicyAction",
+    "ActionStatus",
+    "ConfirmationError",
+    "ConfirmationManager",
+    "PendingAction",
     "PolicyDecision",
     "PolicyEnforcer",
     "PolicyViolationError",

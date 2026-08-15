@@ -79,6 +79,7 @@ class JarvisSystem:
     audit_logger: Optional[AuditLogger] = None
     boundary_guard: Optional[BoundaryGuard] = None
     policy_enforcer: Optional[Any] = None
+    confirmation_manager: Optional[Any] = None
     operator_manager: Optional[OperatorManager] = None
     agent_manager: Optional[AgentManager] = None
     agent_scheduler: Optional[AgentScheduler] = None

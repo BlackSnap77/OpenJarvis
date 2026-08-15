@@ -351,6 +351,8 @@ class ToolUsingAgent(BaseAgent):
         confirm_callback: Optional[Any] = None,
         skill_few_shot_examples: Optional[List[str]] = None,
         prompt_builder: Optional[Any] = None,
+        policy_enforcer: Optional[Any] = None,
+        confirmation_manager: Optional[Any] = None,
     ) -> None:
         super().__init__(
             engine,
@@ -374,6 +376,8 @@ class ToolUsingAgent(BaseAgent):
             agent_id=_aid,
             interactive=interactive,
             confirm_callback=confirm_callback,
+            policy_enforcer=policy_enforcer,
+            confirmation_manager=confirmation_manager,
         )
         # Resolve max_turns: explicit arg > config > class default > 10
         if max_turns is not None:

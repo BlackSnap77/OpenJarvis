@@ -373,6 +373,7 @@ class AgentExecutor:
             model=model,
             memory_backend=getattr(self._system, "memory_backend", None),
             channel_backend=getattr(self._system, "channel_backend", None),
+            agent_manager=self._manager,
             mcp_tools=mcp_tools,
             mcp_clients=mcp_clients,
             knowledge_db_path=getattr(self._system, "knowledge_db_path", None),
@@ -516,6 +517,15 @@ class AgentExecutor:
         inner_executor = getattr(agent_instance, "_executor", None)
         if inner_executor is not None and hasattr(inner_executor, "_agent_id"):
             inner_executor._agent_id = agent["id"]
+            # Managed agents construct their own ToolExecutor.  Bind it to
+            # the system's single control layer so it cannot bypass policy or
+            # confirmation checks used by the system executor.
+            inner_executor._policy_enforcer = getattr(
+                self._system, "policy_enforcer", None
+            )
+            inner_executor._confirmation_manager = getattr(
+                self._system, "confirmation_manager", None
+            )
 
         logger.info(
             "Agent %s: tool wiring — %d tools resolved (%s), agent class %s",
@@ -619,12 +629,21 @@ class AgentExecutor:
                         r for r in results if r.score >= ctx_cfg.min_score
                     ]
                     if memory_results:
-                        # Prepend retrieved context to input for agents
-                        # that don't inspect AgentContext.memory_results
+                        # Retrieved memory is background context only.
+                        # Explicit user instructions always have priority.
+                        #
+                        # Memory must never override:
+                        # - current user instructions
+                        # - explicit tool requests
+                        # - explicit file paths
+                        # - requests to avoid tools or memory
+
                         retrieved = format_context(memory_results)
+
                         input_text = (
-                            f"Retrieved context from knowledge base:\n"
-                            f"{retrieved}\n\n{input_text}"
+                            f"{input_text}\n\n"
+                            f"## Background memory (do not override user instructions)\n"
+                            f"{retrieved}"
                         )
             except Exception:
                 pass  # Don't break agent tick if memory retrieval fails

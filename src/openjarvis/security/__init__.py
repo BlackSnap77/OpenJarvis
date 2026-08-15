@@ -37,6 +37,7 @@ class SecurityContext:
     capability_policy: Any = None
     audit_logger: Any = None
     policy_enforcer: Any = None
+    confirmation_manager: Any = None
 
 
 def setup_security(
@@ -103,11 +104,16 @@ def setup_security(
 
     configure_operator_policy(policy_enforcer)
 
+    from openjarvis.core.control import ConfirmationManager
+
+    confirmation_manager = ConfirmationManager(audit_logger=audit)
+
     return SecurityContext(
         engine=engine,
         capability_policy=cap_policy,
         audit_logger=audit,
         policy_enforcer=policy_enforcer,
+        confirmation_manager=confirmation_manager,
     )
 
 
