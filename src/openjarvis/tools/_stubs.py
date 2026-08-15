@@ -107,6 +107,7 @@ class ToolExecutor:
         capability_policy: Optional[Any] = None,
         agent_id: str = "",
         boundary_guard: Optional[Any] = None,
+        policy_enforcer: Optional[Any] = None,
     ) -> None:
         self._tools: Dict[str, BaseTool] = {t.spec.name: t for t in tools}
         self._bus = bus
@@ -116,6 +117,7 @@ class ToolExecutor:
         self._capability_policy = capability_policy
         self._agent_id = agent_id
         self._boundary_guard = boundary_guard
+        self._policy_enforcer = policy_enforcer
 
     def execute(self, tool_call: ToolCall) -> ToolResult:
         """Parse arguments, dispatch to tool, measure latency, emit events."""
@@ -136,6 +138,28 @@ class ToolExecutor:
                 content=f"Invalid arguments JSON: {exc}",
                 success=False,
             )
+
+        # OpenJarvis Control Layer Policy check
+        if self._policy_enforcer is not None:
+            try:
+                decision = self._policy_enforcer.check(
+                    tool_call.name,
+                    params,
+                )
+
+                if decision.is_denied():
+                    return ToolResult(
+                        tool_name=tool_call.name,
+                        content=f"Policy denied: {decision.reason}",
+                        success=False,
+                    )
+
+            except Exception as exc:
+                return ToolResult(
+                    tool_name=tool_call.name,
+                    content=f"Policy check failed: {exc}",
+                    success=False,
+                )
 
         # Boundary guard: scan external tool arguments
         if self._boundary_guard is not None and not getattr(tool, "is_local", True):

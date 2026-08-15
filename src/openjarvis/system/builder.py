@@ -6,6 +6,7 @@ import logging
 from typing import Any, List, Optional
 
 from openjarvis.core.config import JarvisConfig, load_config
+from openjarvis.core.control import PolicyEnforcer
 from openjarvis.core.events import EventBus, get_event_bus
 from openjarvis.core.paths import get_config_dir
 from openjarvis.engine._stubs import InferenceEngine
@@ -210,7 +211,15 @@ class SystemBuilder:
             memory_backend,
             channel_backend,
         )
-        tool_executor = ToolExecutor(tool_list, bus) if tool_list else None
+        tool_executor = (
+            ToolExecutor(
+                tool_list,
+                bus,
+                policy_enforcer=sec.policy_enforcer,
+            )
+            if tool_list
+            else None
+        )
 
         skill_manager = None
         skill_few_shot_examples: List[str] = []
@@ -235,7 +244,11 @@ class SystemBuilder:
                 )
                 tool_list.extend(skill_tools)
                 if tool_list:
-                    tool_executor = ToolExecutor(tool_list, bus)
+                    tool_executor = ToolExecutor(
+                        tool_list,
+                        bus,
+                        policy_enforcer=sec.policy_enforcer,
+                    )
                 skill_few_shot_examples = skill_manager.get_few_shot_examples()
             except Exception as exc:
                 logger.warning("Failed to initialize skills: %s", exc)
@@ -319,6 +332,9 @@ class SystemBuilder:
             model=model,
             agent_name=agent_name,
             tools=tool_list,
+            agent_manager=agent_manager,
+            agent_scheduler=agent_scheduler,
+            agent_executor=agent_executor,
             mcp_tools=list(self._mcp_tools),
             tool_executor=tool_executor,
             memory_backend=memory_backend,
@@ -333,9 +349,7 @@ class SystemBuilder:
             session_store=session_store,
             capability_policy=capability_policy,
             audit_logger=sec.audit_logger,
-            agent_manager=agent_manager,
-            agent_scheduler=agent_scheduler,
-            agent_executor=agent_executor,
+            policy_enforcer=sec.policy_enforcer,
             speech_backend=speech_backend,
             skill_manager=skill_manager,
         )

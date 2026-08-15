@@ -1248,6 +1248,7 @@ async def _stream_managed_agent(
         bus=bus,
         interactive=True,
         confirm_callback=lambda _prompt: True,
+        policy_enforcer=getattr(app_state, "policy_enforcer", None),
     )
 
     # Forward any per-agent sampler params (repetition_penalty, top_p, …) so

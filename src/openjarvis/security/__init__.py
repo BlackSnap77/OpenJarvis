@@ -36,6 +36,7 @@ class SecurityContext:
     engine: Any
     capability_policy: Any = None
     audit_logger: Any = None
+    policy_enforcer: Any = None
 
 
 def setup_security(
@@ -93,10 +94,20 @@ def setup_security(
     except Exception as exc:
         logger.debug("Failed to set up audit logger: %s", exc)
 
+    from openjarvis.core.control import PolicyEnforcer
+    from openjarvis.core.control.operator_policy import (
+        configure_operator_policy,
+    )
+
+    policy_enforcer = PolicyEnforcer()
+
+    configure_operator_policy(policy_enforcer)
+
     return SecurityContext(
         engine=engine,
         capability_policy=cap_policy,
         audit_logger=audit,
+        policy_enforcer=policy_enforcer,
     )
 
 
