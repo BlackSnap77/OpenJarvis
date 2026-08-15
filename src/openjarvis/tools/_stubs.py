@@ -138,8 +138,11 @@ class ToolExecutor:
                 success=False,
             )
         try:
-            action = self._confirmation_manager.approve(action_id, fingerprint)
-            params = json.loads(action.canonical_arguments)
+            action = self._confirmation_manager.approve(
+                action_id,
+                fingerprint,
+                agent_id=self._agent_id,
+            )
         except Exception as exc:
             return ToolResult(
                 tool_name="confirmation",
@@ -162,6 +165,7 @@ class ToolExecutor:
             self._confirmation_manager.mark_executed(
                 action.action_id,
                 success=result.success,
+                result=result.content,
             )
         except Exception:
             # The execution result is authoritative; auditing is best effort.
@@ -258,6 +262,7 @@ class ToolExecutor:
                     action = self._confirmation_manager.create(
                         tool_call.name,
                         params,
+                        agent_id=self._agent_id,
                     )
                     return ToolResult(
                         tool_name=tool_call.name,
