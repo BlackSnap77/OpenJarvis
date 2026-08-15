@@ -1,4 +1,4 @@
-"""Tests for tools/_stubs.py — ToolSpec, BaseTool, ToolExecutor."""
+﻿"""Tests for tools/_stubs.py â€” ToolSpec, BaseTool, ToolExecutor."""
 
 from __future__ import annotations
 
@@ -155,6 +155,25 @@ class TestToolExecutor:
         names = {s.name for s in specs}
         assert names == {"echo", "error"}
 
+    def test_register_tool(self):
+        executor = ToolExecutor([])
+
+        executor.register_tool(_EchoTool())
+
+        specs = executor.available_tools()
+        assert len(specs) == 1
+        assert specs[0].name == "echo"
+
+    def test_register_tool_rejects_duplicate_name(self):
+        executor = ToolExecutor([_EchoTool()])
+
+        try:
+            executor.register_tool(_EchoTool())
+        except ValueError as exc:
+            assert "already registered" in str(exc)
+        else:
+            raise AssertionError("Expected duplicate tool registration to fail")
+
     def test_get_openai_tools(self):
         executor = ToolExecutor([_EchoTool()])
         tools = executor.get_openai_tools()
@@ -196,3 +215,4 @@ class TestToolExecutor:
         executor = ToolExecutor([])
         assert executor.available_tools() == []
         assert executor.get_openai_tools() == []
+

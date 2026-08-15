@@ -1,4 +1,4 @@
-"""ABC for tool implementations and the ToolExecutor dispatch engine.
+﻿"""ABC for tool implementations and the ToolExecutor dispatch engine.
 
 Follows the same registry pattern as ``engine/_stubs.py`` and ``memory/_stubs.py``.
 Each tool is registered via ``@ToolRegistry.register("name")`` and implements
@@ -18,7 +18,7 @@ from openjarvis.core.events import EventBus, EventType
 from openjarvis.core.types import ToolCall, ToolResult
 
 # ---------------------------------------------------------------------------
-# ToolSpec — metadata describing a tool's interface
+# ToolSpec â€” metadata describing a tool's interface
 # ---------------------------------------------------------------------------
 
 
@@ -81,7 +81,7 @@ class BaseTool(ABC):
 
 
 # ---------------------------------------------------------------------------
-# ToolExecutor — dispatch engine for tool calls
+# ToolExecutor â€” dispatch engine for tool calls
 # ---------------------------------------------------------------------------
 
 
@@ -123,6 +123,13 @@ class ToolExecutor:
         # Pop-on-use authorizations are only inserted by ``confirm_action``.
         # A caller-provided ToolCall id alone can therefore never bypass policy.
         self._approved_action_fingerprints: Dict[str, str] = {}
+
+    def register_tool(self, tool: BaseTool) -> None:
+        """Register one additional tool without replacing existing entries."""
+        name = tool.spec.name
+        if name in self._tools:
+            raise ValueError(f"Tool '{name}' is already registered")
+        self._tools[name] = tool
 
     def confirm_action(self, action_id: str, fingerprint: str) -> ToolResult:
         """Execute the one immutable action identified by a user confirmation.
@@ -371,7 +378,7 @@ class ToolExecutor:
 
         # Emit start event. ``agent`` carries the managed-agent UUID so the
         # AgentExecutor's trace subscriber (which filters by agent_id) can
-        # actually match this event — without it, every tool call is silently
+        # actually match this event â€” without it, every tool call is silently
         # dropped from traces.
         if self._bus:
             self._bus.publish(
@@ -426,9 +433,9 @@ class ToolExecutor:
         if self._bus:
             result_text = str(result.content)[:10240] if result.content else ""
             # Pass through ToolResult.metadata so downstream consumers
-            # (TraceCollector → TraceStep.metadata → SkillOptimizer) can
+            # (TraceCollector â†’ TraceStep.metadata â†’ SkillOptimizer) can
             # see skill-tagged invocations.  Filter to JSON-serializable
-            # values only — internal objects like TaintSet (added by the
+            # values only â€” internal objects like TaintSet (added by the
             # taint auto-detect above) must not leak to event subscribers
             # since the trace store will JSON-serialize them later.
             event_metadata = self._json_safe_metadata(result.metadata)
@@ -455,7 +462,7 @@ class ToolExecutor:
         in-process security checks but cannot be serialized when the
         ``TraceCollector`` writes ``TraceStep.metadata`` to JSON in the
         SQLite trace store.  This helper drops any keys whose value is
-        not JSON-safe — silently, since the missing data is not
+        not JSON-safe â€” silently, since the missing data is not
         load-bearing for downstream consumers.
         """
         if not metadata:
@@ -552,3 +559,4 @@ def build_tool_descriptions(
 
 
 __all__ = ["BaseTool", "ToolExecutor", "ToolSpec", "build_tool_descriptions"]
+
