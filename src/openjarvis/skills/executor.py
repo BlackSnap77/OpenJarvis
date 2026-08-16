@@ -37,10 +37,12 @@ class SkillExecutor:
         self,
         tool_executor: ToolExecutor,
         *,
+        secure_tool_gateway: Optional[Any] = None,
         bus: Optional[EventBus] = None,
         allowed_capabilities: Optional[Set[str]] = None,
     ) -> None:
         self._tool_executor = tool_executor
+        self._secure_tool_gateway = secure_tool_gateway
         self._bus = bus
         self._skill_resolver: Optional[SkillResolver] = None
         # None means "no capability policy" — every skill runs, matching the
@@ -128,7 +130,10 @@ class SkillExecutor:
                     name=step.tool_name,
                     arguments=rendered,
                 )
-                result = self._tool_executor.execute(tool_call)
+                execution_gateway = (
+                    self._secure_tool_gateway or self._tool_executor
+                )
+                result = execution_gateway.execute(tool_call)
 
             all_results.append(result)
 

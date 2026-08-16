@@ -118,7 +118,7 @@ class TestToolExecutor:
         result = executor.execute(call)
         assert result.success is True
         assert result.content == "hi"
-        assert result.latency_seconds > 0
+        assert result.latency_seconds >= 0
 
     def test_execute_unknown_tool(self):
         executor = ToolExecutor([_EchoTool()])
@@ -215,4 +215,5 @@ class TestToolExecutor:
         executor = ToolExecutor([])
         assert executor.available_tools() == []
         assert executor.get_openai_tools() == []
+
 

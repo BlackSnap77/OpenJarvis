@@ -38,6 +38,7 @@ class SkillManager:
         self._capability_policy = capability_policy
         self._skills: Dict[str, SkillManifest] = {}
         self._tool_executor: Optional[ToolExecutor] = None
+        self._secure_tool_gateway: Optional[Any] = None
         if overlay_dir is None:
             # Try to read from config first; fall back to the default
             # ~/.openjarvis/learning/skills/ if config can't be loaded.
@@ -143,7 +144,10 @@ class SkillManager:
     # ------------------------------------------------------------------
 
     def get_skill_tools(
-        self, *, tool_executor: Optional[ToolExecutor] = None
+        self,
+        *,
+        tool_executor: Optional[ToolExecutor] = None,
+        secure_tool_gateway: Optional[Any] = None,
     ) -> List[BaseTool]:
         """Wrap each registered skill as a :class:`SkillTool` (a :class:`BaseTool`).
 
@@ -159,11 +163,16 @@ class SkillManager:
             One :class:`SkillTool` per registered skill.
         """
         executor = tool_executor or self._tool_executor
+        gateway = secure_tool_gateway or self._secure_tool_gateway
         tools: List[BaseTool] = []
 
         for manifest in self._skills.values():
             real_executor = executor or _NullToolExecutor()
-            skill_exec = SkillExecutor(real_executor, bus=self._bus)
+            skill_exec = SkillExecutor(
+                real_executor,
+                secure_tool_gateway=gateway,
+                bus=self._bus,
+            )
 
             # Wire sub-skill resolver so nested skill_name steps can delegate back
             skill_exec.set_skill_resolver(self._make_resolver())
@@ -180,6 +189,7 @@ class SkillManager:
             manifest = self.resolve(name)
             skill_exec = SkillExecutor(
                 self._tool_executor or _NullToolExecutor(),
+                secure_tool_gateway=self._secure_tool_gateway,
                 bus=self._bus,
             )
             skill_exec.set_skill_resolver(_resolver)
@@ -349,6 +359,7 @@ class SkillManager:
         manifest = self.resolve(name)
         executor = SkillExecutor(
             self._tool_executor or _NullToolExecutor(),
+            secure_tool_gateway=self._secure_tool_gateway,
             bus=self._bus,
         )
         executor.set_skill_resolver(self._make_resolver())
@@ -361,6 +372,10 @@ class SkillManager:
     def set_tool_executor(self, tool_executor: ToolExecutor) -> None:
         """Attach a :class:`ToolExecutor` for running tool steps in skill pipelines."""
         self._tool_executor = tool_executor
+
+    def set_secure_tool_gateway(self, secure_tool_gateway: Any) -> None:
+        """Attach the shared security gateway used for skill tool calls."""
+        self._secure_tool_gateway = secure_tool_gateway
 
     # ------------------------------------------------------------------
     # Lifecycle

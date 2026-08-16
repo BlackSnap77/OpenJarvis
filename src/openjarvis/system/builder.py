@@ -219,9 +219,19 @@ class SystemBuilder:
                 policy_enforcer=sec.policy_enforcer,
                 confirmation_manager=sec.confirmation_manager,
             )
-            if tool_list
+            if tool_list or config.skills.enabled
             else None
         )
+
+        secure_tool_gateway = None
+        if tool_executor is not None:
+            secure_tool_gateway = SecureToolGateway(
+                tool_executor,
+                policy_enforcer=sec.policy_enforcer,
+                confirmation_manager=sec.confirmation_manager,
+                audit_logger=sec.audit_logger,
+            )
+            sec.secure_tool_gateway = secure_tool_gateway
 
         skill_manager = None
         skill_few_shot_examples: List[str] = []
@@ -241,17 +251,19 @@ class SystemBuilder:
                 skill_manager.discover(paths=skill_paths)
                 if tool_executor:
                     skill_manager.set_tool_executor(tool_executor)
+                if secure_tool_gateway:
+                    skill_manager.set_secure_tool_gateway(secure_tool_gateway)
+
                 skill_tools = skill_manager.get_skill_tools(
                     tool_executor=tool_executor,
+                    secure_tool_gateway=secure_tool_gateway,
                 )
+
+                if tool_executor:
+                    for skill_tool in skill_tools:
+                        tool_executor.register_tool(skill_tool)
+
                 tool_list.extend(skill_tools)
-                if tool_list:
-                    tool_executor = ToolExecutor(
-                        tool_list,
-                        bus,
-                        policy_enforcer=sec.policy_enforcer,
-                        confirmation_manager=sec.confirmation_manager,
-                    )
                 skill_few_shot_examples = skill_manager.get_few_shot_examples()
             except Exception as exc:
                 logger.warning("Failed to initialize skills: %s", exc)
@@ -327,16 +339,6 @@ class SystemBuilder:
             except Exception as exc:
                 logger.warning("Failed to initialize speech backend: %s", exc)
 
-        secure_tool_gateway = None
-        if tool_executor is not None:
-            secure_tool_gateway = SecureToolGateway(
-                tool_executor,
-                policy_enforcer=sec.policy_enforcer,
-                confirmation_manager=sec.confirmation_manager,
-                audit_logger=sec.audit_logger,
-            )
-            sec.secure_tool_gateway = secure_tool_gateway
-
         system = JarvisSystem(
             config=config,
             bus=bus,
@@ -364,6 +366,7 @@ class SystemBuilder:
             audit_logger=sec.audit_logger,
             policy_enforcer=sec.policy_enforcer,
             confirmation_manager=sec.confirmation_manager,
+            confirmation_store=sec.confirmation_store,
             secure_tool_gateway=secure_tool_gateway,
             speech_backend=speech_backend,
             skill_manager=skill_manager,
