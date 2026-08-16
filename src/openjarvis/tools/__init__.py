@@ -170,4 +170,7 @@ except ImportError:
     pass
 
 __all__ = ["BaseTool", "SecureToolGateway", "ToolExecutor", "ToolSpec"]
-from openjarvis.tools import managed_agent
+try:
+    import openjarvis.tools.managed_agent  # noqa: F401
+except ImportError:
+    pass
