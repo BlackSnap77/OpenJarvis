@@ -244,14 +244,15 @@ class TestMCPIntegration:
     """MCP server + client with real tools."""
 
     def test_mcp_server_with_all_tools(self):
+        from tests.mcp._security import secure_mcp_server
+
         from openjarvis.mcp.client import MCPClient
-        from openjarvis.mcp.server import MCPServer
         from openjarvis.mcp.transport import InProcessTransport
         from openjarvis.tools.calculator import CalculatorTool
         from openjarvis.tools.think import ThinkTool
 
         tools = [CalculatorTool(), ThinkTool()]
-        server = MCPServer(tools)
+        server = secure_mcp_server(tools)
         transport = InProcessTransport(server)
         client = MCPClient(transport)
 
@@ -283,13 +284,14 @@ class TestMCPIntegration:
         client.close()
 
     def test_mcp_unknown_tool_error(self):
+        from tests.mcp._security import secure_mcp_server
+
         from openjarvis.mcp.client import MCPClient
         from openjarvis.mcp.protocol import MCPError
-        from openjarvis.mcp.server import MCPServer
         from openjarvis.mcp.transport import InProcessTransport
         from openjarvis.tools.calculator import CalculatorTool
 
-        server = MCPServer([CalculatorTool()])
+        server = secure_mcp_server([CalculatorTool()])
         client = MCPClient(InProcessTransport(server))
         client.initialize()
 
@@ -300,12 +302,13 @@ class TestMCPIntegration:
 
     def test_mcp_roundtrip_lifecycle(self):
         """Full lifecycle: init -> list -> call -> result."""
+        from tests.mcp._security import secure_mcp_server
+
         from openjarvis.mcp.client import MCPClient
-        from openjarvis.mcp.server import MCPServer
         from openjarvis.mcp.transport import InProcessTransport
         from openjarvis.tools.calculator import CalculatorTool
 
-        server = MCPServer([CalculatorTool()])
+        server = secure_mcp_server([CalculatorTool()])
         client = MCPClient(InProcessTransport(server))
 
         # 1. Initialize

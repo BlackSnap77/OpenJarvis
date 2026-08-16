@@ -11,17 +11,17 @@ import pytest
 
 from openjarvis.mcp.client import MCPClient
 from openjarvis.mcp.protocol import MCPError, MCPResponse
-from openjarvis.mcp.server import MCPServer
 from openjarvis.mcp.transport import InProcessTransport
 from openjarvis.tools._stubs import ToolSpec
 from openjarvis.tools.calculator import CalculatorTool
 from openjarvis.tools.think import ThinkTool
+from tests.mcp._security import secure_mcp_server
 
 
 @pytest.fixture
 def client():
     """MCP client connected via in-process transport."""
-    server = MCPServer([CalculatorTool(), ThinkTool()])
+    server = secure_mcp_server([CalculatorTool(), ThinkTool()])
     transport = InProcessTransport(server)
     return MCPClient(transport)
 

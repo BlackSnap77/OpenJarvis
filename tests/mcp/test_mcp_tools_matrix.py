@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 
 from openjarvis.mcp.client import MCPClient
-from openjarvis.mcp.server import MCPServer
 from openjarvis.mcp.transport import InProcessTransport
 from openjarvis.tools.calculator import CalculatorTool
 from openjarvis.tools.think import ThinkTool
+from tests.mcp._security import secure_mcp_server
 
 # Tool configs: (tool_class, call_arguments, expected_substring)
 _TOOL_CONFIGS = {
@@ -20,7 +20,7 @@ _TOOL_CONFIGS = {
 def _make_client(tool_classes):
     """Create an MCP client with the given tool instances."""
     tools = [cls() for cls in tool_classes]
-    server = MCPServer(tools)
+    server = secure_mcp_server(tools)
     transport = InProcessTransport(server)
     return MCPClient(transport)
 

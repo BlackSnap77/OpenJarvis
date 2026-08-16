@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -13,7 +14,8 @@ from openjarvis.mcp.protocol import (
     MCPRequest,
     MCPResponse,
 )
-from openjarvis.tools._stubs import BaseTool, ToolExecutor
+from openjarvis.tools._stubs import BaseTool
+from openjarvis.tools.secure_gateway import SecureToolGateway
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +53,35 @@ class MCPServer:
     SERVER_VERSION = "0.1.0"
     PROTOCOL_VERSION = "2025-11-25"
 
-    def __init__(self, tools: Optional[List[BaseTool]] = None) -> None:
+    def __init__(
+        self,
+        tools: Optional[List[BaseTool]] = None,
+        *,
+        secure_tool_gateway: Optional[SecureToolGateway] = None,
+        actor_context: Optional[Dict[str, str]] = None,
+    ) -> None:
         if tools is None:
             tools = self._auto_discover_tools()
         self._tools: Dict[str, BaseTool] = {t.spec.name: t for t in tools}
-        self._executor = ToolExecutor(tools)
+        # Tool discovery is safe without a security context. Execution is
+        # not: the embedding runtime must explicitly provide its central
+        # gateway instead of this protocol adapter constructing one.
+        self._secure_tool_gateway = secure_tool_gateway
+        self._actor_context = dict(actor_context or {})
+
+    def _validated_gateway(self) -> Optional[SecureToolGateway]:
+        """Return the injected gateway only with a complete security context."""
+        gateway = self._secure_tool_gateway
+        if not isinstance(gateway, SecureToolGateway):
+            return None
+        executor = gateway.executor
+        if (
+            getattr(executor, "_policy_enforcer", None) is None
+            or getattr(executor, "_confirmation_manager", None) is None
+            or getattr(executor, "_capability_policy", None) is None
+        ):
+            return None
+        return gateway
 
     @staticmethod
     def _auto_discover_tools() -> List[BaseTool]:
@@ -255,15 +281,42 @@ class MCPServer:
                 f"Unknown tool: {tool_name}",
             )
 
-        try:
-            import json
+        gateway = self._validated_gateway()
+        if gateway is None:
+            return MCPResponse.error_response(
+                req.id,
+                INTERNAL_ERROR,
+                "MCP tool execution requires a configured secure gateway",
+            )
 
+        # A discovery-only tool must never become executable merely because
+        # this adapter lists it. The gateway executor owns the execution
+        # allow-list and therefore must contain the same named tool.
+        if tool_name not in gateway.executor._tools:
+            return MCPResponse.error_response(
+                req.id,
+                INVALID_PARAMS,
+                f"Tool '{tool_name}' is not available in the secure gateway",
+            )
+
+        if not isinstance(arguments, dict):
+            return MCPResponse.error_response(
+                req.id,
+                INVALID_PARAMS,
+                "Tool arguments must be an object",
+            )
+
+        try:
             tool_call = ToolCall(
                 id=f"mcp-{req.id}",
                 name=tool_name,
-                arguments=json.dumps(arguments),
+                arguments=json.dumps(
+                    arguments,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
             )
-            result = self._executor.execute(tool_call)
+            result = gateway.execute(tool_call, **self._actor_context)
             return MCPResponse(
                 result={
                     "content": [

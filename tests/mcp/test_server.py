@@ -12,12 +12,13 @@ from openjarvis.mcp.protocol import (
 from openjarvis.mcp.server import MCPServer
 from openjarvis.tools.calculator import CalculatorTool
 from openjarvis.tools.think import ThinkTool
+from tests.mcp._security import secure_mcp_server
 
 
 @pytest.fixture
 def server():
     """Create an MCP server with calculator and think tools."""
-    return MCPServer([CalculatorTool(), ThinkTool()])
+    return secure_mcp_server([CalculatorTool(), ThinkTool()])
 
 
 class TestMCPServer:
