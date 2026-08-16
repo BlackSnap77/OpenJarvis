@@ -5,7 +5,11 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from openjarvis.core.control import ConfirmationManager, PolicyEnforcer, ToolPolicyConfig
+from openjarvis.core.control import (
+    ConfirmationManager,
+    PolicyEnforcer,
+    ToolPolicyConfig,
+)
 from openjarvis.core.types import ToolCall, ToolResult
 from openjarvis.tools._stubs import BaseTool, ToolExecutor, ToolSpec
 
@@ -208,7 +212,9 @@ class TestToolConfirmation:
             ToolCall(id="pending", name="counting", arguments='{"value": 1}')
         )
 
-        result = executor.confirm_action(pending.metadata["action_id"], "bad-fingerprint")
+        result = executor.confirm_action(
+            pending.metadata["action_id"], "bad-fingerprint"
+        )
 
         assert result.success is False
         assert tool.calls == []
@@ -227,6 +233,27 @@ class TestToolConfirmation:
             "approved",
             "executed",
         ]
+
+    def test_central_toolspec_confirmation_avoids_legacy_callback(self) -> None:
+        tool = _DangerousTool()
+        manager = ConfirmationManager()
+        executor = ToolExecutor(
+            [tool],
+            policy_enforcer=PolicyEnforcer(),
+            confirmation_manager=manager,
+            central_confirmation_tools={"dangerous"},
+            interactive=True,
+            confirm_callback=lambda _prompt: (_ for _ in ()).throw(AssertionError()),
+        )
+        pending = executor.execute(
+            ToolCall(id="pending", name="dangerous", arguments="{}"), user_id="actor"
+        )
+        result = executor.confirm_action(
+            pending.metadata["action_id"],
+            pending.metadata["fingerprint"],
+            user_id="actor",
+        )
+        assert result.success is True
 
     def test_requires_confirmation_no_callback(self) -> None:
         """Tool requiring confirmation but no callback → blocked."""

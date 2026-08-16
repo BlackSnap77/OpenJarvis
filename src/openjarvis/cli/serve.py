@@ -544,6 +544,7 @@ def serve(
             capability_policy=sec.capability_policy,
             policy_enforcer=sec.policy_enforcer,
             confirmation_manager=sec.confirmation_manager,
+            central_confirmation_tools={"agent_spawn", "agent_kill", "agent_send"},
         )
         rest_agent_control_gateway = SecureToolGateway(
             rest_agent_control_executor,

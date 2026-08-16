@@ -9,7 +9,7 @@ pytest.importorskip("fastapi", reason="openjarvis[server] not installed")
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from openjarvis.server.auth_middleware import AuthMiddleware
+from openjarvis.server.auth_middleware import AuthMiddleware, confirmation_actor_id
 
 
 def _make_app(api_key: str) -> FastAPI:
@@ -60,6 +60,12 @@ class TestAuthMiddleware:
             headers={"Authorization": "Bearer oj_sk_test123"},
         )
         assert resp.status_code == 200
+
+    def test_confirmation_actor_is_stable_and_does_not_contain_key(self):
+        actor = confirmation_actor_id("oj_sk_test123")
+        assert actor == confirmation_actor_id("oj_sk_test123")
+        assert actor != confirmation_actor_id("other-key")
+        assert "oj_sk_test123" not in actor
 
     def test_health_exempt(self, client):
         resp = client.get("/health")

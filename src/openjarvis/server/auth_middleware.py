@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import secrets
@@ -11,6 +12,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
+
+
+def confirmation_actor_id(api_key: str) -> str:
+    """Return the stable, non-secret HTTP confirmation actor for *api_key*."""
+    digest = hashlib.sha256(
+        b"openjarvis:http-api-key:v1:" + api_key.encode("utf-8")
+    ).hexdigest()
+    return f"http-api-key-sha256:{digest}"
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -41,6 +50,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     {"detail": "Invalid API key"},
                     status_code=401,
                 )
+            # This is deliberately derived only after authentication succeeds.
+            # Never retain or expose the bearer token itself on the request.
+            request.state.confirmation_actor_id = confirmation_actor_id(self._api_key)
         return await call_next(request)
 
     @staticmethod

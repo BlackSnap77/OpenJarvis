@@ -60,17 +60,17 @@ class SecureToolGateway:
         """Return the shared audit logger for the next migration steps."""
         return self._audit_logger
 
-    def execute(self, tool_call: ToolCall) -> ToolResult:
+    def execute(self, tool_call: ToolCall, **actor: str) -> ToolResult:
         """Run *tool_call* through the existing secured executor."""
-        return self._executor.execute(tool_call)
+        return self._executor.execute(tool_call, **actor)
 
-    def confirm(self, action_id: str, fingerprint: str) -> ToolResult:
+    def confirm(self, action_id: str, fingerprint: str, **actor: str) -> ToolResult:
         """Confirm an action through the executor's existing safe resume path."""
-        return self._executor.confirm_action(action_id, fingerprint)
+        return self._executor.confirm_action(action_id, fingerprint, **actor)
 
-    def reject(self, action_id: str) -> ToolResult:
+    def reject(self, action_id: str, **actor: str) -> ToolResult:
         """Reject an action through the executor's existing safe reject path."""
-        return self._executor.reject_action(action_id)
+        return self._executor.reject_action(action_id, **actor)
 
     def _wire_security_component(
         self,

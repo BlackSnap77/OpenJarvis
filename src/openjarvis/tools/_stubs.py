@@ -109,6 +109,7 @@ class ToolExecutor:
         boundary_guard: Optional[Any] = None,
         policy_enforcer: Optional[Any] = None,
         confirmation_manager: Optional[Any] = None,
+        central_confirmation_tools: Optional[List[str]] = None,
     ) -> None:
         self._tools: Dict[str, BaseTool] = {t.spec.name: t for t in tools}
         self._bus = bus
@@ -120,6 +121,9 @@ class ToolExecutor:
         self._boundary_guard = boundary_guard
         self._policy_enforcer = policy_enforcer
         self._confirmation_manager = confirmation_manager
+        # REST administrative tools opt into the durable confirmation flow
+        # without changing legacy CLI behaviour for every ToolSpec flag.
+        self._central_confirmation_tools = set(central_confirmation_tools or [])
         # Pop-on-use authorizations are only inserted by ``confirm_action``.
         # A caller-provided ToolCall id alone can therefore never bypass policy.
         self._approved_action_fingerprints: Dict[str, str] = {}
@@ -131,7 +135,15 @@ class ToolExecutor:
             raise ValueError(f"Tool '{name}' is already registered")
         self._tools[name] = tool
 
-    def confirm_action(self, action_id: str, fingerprint: str) -> ToolResult:
+    def confirm_action(
+        self,
+        action_id: str,
+        fingerprint: str,
+        *,
+        user_id: str = "",
+        session_id: str = "",
+        agent_id: Optional[str] = None,
+    ) -> ToolResult:
         """Execute the one immutable action identified by a user confirmation.
 
         The regular ``execute`` path is deliberately reused.  This means the
@@ -144,11 +156,14 @@ class ToolExecutor:
                 content="Confirmation manager is not configured.",
                 success=False,
             )
+        effective_agent_id = self._agent_id if agent_id is None else agent_id
         try:
             action = self._confirmation_manager.approve(
                 action_id,
                 fingerprint,
-                agent_id=self._agent_id,
+                user_id=user_id,
+                session_id=session_id,
+                agent_id=effective_agent_id,
             )
         except Exception as exc:
             return ToolResult(
@@ -166,7 +181,10 @@ class ToolExecutor:
                 id=action.action_id,
                 name=action.tool_name,
                 arguments=action.canonical_arguments,
-            )
+            ),
+            user_id=user_id,
+            session_id=session_id,
+            agent_id=effective_agent_id,
         )
         try:
             self._confirmation_manager.mark_executed(
@@ -179,7 +197,14 @@ class ToolExecutor:
             pass
         return result
 
-    def reject_action(self, action_id: str) -> ToolResult:
+    def reject_action(
+        self,
+        action_id: str,
+        *,
+        user_id: str = "",
+        session_id: str = "",
+        agent_id: Optional[str] = None,
+    ) -> ToolResult:
         """Record an explicit user rejection without executing a tool."""
         if self._confirmation_manager is None:
             return ToolResult(
@@ -187,8 +212,14 @@ class ToolExecutor:
                 content="Confirmation manager is not configured.",
                 success=False,
             )
+        effective_agent_id = self._agent_id if agent_id is None else agent_id
         try:
-            action = self._confirmation_manager.reject(action_id)
+            action = self._confirmation_manager.reject(
+                action_id,
+                user_id=user_id,
+                session_id=session_id,
+                agent_id=effective_agent_id,
+            )
         except Exception as exc:
             return ToolResult(
                 tool_name="confirmation",
@@ -202,7 +233,14 @@ class ToolExecutor:
             metadata={"action_id": action.action_id, "status": action.status.value},
         )
 
-    def execute(self, tool_call: ToolCall) -> ToolResult:
+    def execute(
+        self,
+        tool_call: ToolCall,
+        *,
+        user_id: str = "",
+        session_id: str = "",
+        agent_id: Optional[str] = None,
+    ) -> ToolResult:
         """Parse arguments, dispatch to tool, measure latency, emit events."""
         tool = self._tools.get(tool_call.name)
         if tool is None:
@@ -221,6 +259,11 @@ class ToolExecutor:
                 content=f"Invalid arguments JSON: {exc}",
                 success=False,
             )
+
+        effective_agent_id = self._agent_id if agent_id is None else agent_id
+        central_confirmation_required = (
+            tool_call.name in self._central_confirmation_tools
+        )
 
         # OpenJarvis Control Layer Policy check
         if self._policy_enforcer is not None:
@@ -244,49 +287,61 @@ class ToolExecutor:
                     success=False,
                 )
 
-            if decision.requires_confirmation():
-                if self._confirmation_manager is None:
-                    return ToolResult(
-                        tool_name=tool_call.name,
-                        content=(
-                            f"Tool '{tool_call.name}' requires confirmation "
-                            "but no confirmation manager is configured."
-                        ),
-                        success=False,
-                    )
-                canonical_arguments = self._confirmation_manager.canonicalize_arguments(
-                    params
+            central_confirmation_required = (
+                central_confirmation_required or decision.requires_confirmation()
+            )
+
+        if central_confirmation_required:
+            if self._confirmation_manager is None:
+                return ToolResult(
+                    tool_name=tool_call.name,
+                    content=(
+                        f"Tool '{tool_call.name}' requires confirmation "
+                        "but no confirmation manager is configured."
+                    ),
+                    success=False,
                 )
-                expected_fingerprint = self._confirmation_manager.fingerprint_for(
+            if not user_id and tool_call.name in self._central_confirmation_tools:
+                return ToolResult(
+                    tool_name=tool_call.name,
+                    content="Confirmation actor is required.",
+                    success=False,
+                )
+            canonical_arguments = self._confirmation_manager.canonicalize_arguments(
+                params
+            )
+            expected_fingerprint = self._confirmation_manager.fingerprint_for(
+                tool_call.name,
+                canonical_arguments,
+            )
+            approved_fingerprint = self._approved_action_fingerprints.pop(
+                tool_call.id,
+                None,
+            )
+            if approved_fingerprint != expected_fingerprint:
+                action = self._confirmation_manager.create(
                     tool_call.name,
-                    canonical_arguments,
+                    params,
+                    user_id=user_id,
+                    session_id=session_id,
+                    agent_id=effective_agent_id,
                 )
-                approved_fingerprint = self._approved_action_fingerprints.pop(
-                    tool_call.id,
-                    None,
+                return ToolResult(
+                    tool_name=tool_call.name,
+                    content=(
+                        f"Confirmation required for tool '{tool_call.name}'. "
+                        f"action_id={action.action_id}"
+                    ),
+                    success=False,
+                    metadata={
+                        "action_id": action.action_id,
+                        "fingerprint": action.fingerprint,
+                        "created_at": action.created_at.isoformat(),
+                        "expires_at": action.expires_at.isoformat(),
+                        "status": action.status.value,
+                        "canonical_arguments": action.canonical_arguments,
+                    },
                 )
-                if approved_fingerprint != expected_fingerprint:
-                    action = self._confirmation_manager.create(
-                        tool_call.name,
-                        params,
-                        agent_id=self._agent_id,
-                    )
-                    return ToolResult(
-                        tool_name=tool_call.name,
-                        content=(
-                            f"Confirmation required for tool '{tool_call.name}'. "
-                            f"action_id={action.action_id}"
-                        ),
-                        success=False,
-                        metadata={
-                            "action_id": action.action_id,
-                            "fingerprint": action.fingerprint,
-                            "created_at": action.created_at.isoformat(),
-                            "expires_at": action.expires_at.isoformat(),
-                            "status": action.status.value,
-                            "canonical_arguments": action.canonical_arguments,
-                        },
-                    )
 
         # Boundary guard: scan external tool arguments
         if self._boundary_guard is not None and not getattr(tool, "is_local", True):
@@ -357,7 +412,7 @@ class ToolExecutor:
                 params.pop("_taint", None)
 
         # Confirmation check for sensitive tools
-        if tool.spec.requires_confirmation:
+        if tool.spec.requires_confirmation and not central_confirmation_required:
             if not self._interactive or self._confirm_callback is None:
                 return ToolResult(
                     tool_name=tool_call.name,

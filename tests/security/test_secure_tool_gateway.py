@@ -83,3 +83,17 @@ def test_gateway_returns_pending_confirmation_without_execution() -> None:
     )
     assert confirmed.success is True
     assert tool.calls == 1
+
+
+def test_gateway_forwards_actor_to_confirmation() -> None:
+    gateway, tool, _ = _gateway(confirmation=True)
+    pending = gateway.execute(
+        ToolCall(id="actor", name="counting", arguments="{}"), user_id="actor-1"
+    )
+    blocked = gateway.confirm(
+        pending.metadata["action_id"],
+        pending.metadata["fingerprint"],
+        user_id="actor-2",
+    )
+    assert blocked.success is False
+    assert tool.calls == 0

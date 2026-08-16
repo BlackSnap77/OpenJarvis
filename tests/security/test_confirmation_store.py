@@ -137,6 +137,17 @@ def test_confirmation_is_bound_to_its_actor(
         manager.close()
 
 
+def test_reject_is_bound_to_its_actor(tmp_path) -> None:
+    manager = _manager(tmp_path / "confirmations.db")
+    action = manager.create("dangerous", {}, user_id="user-1")
+    try:
+        with pytest.raises(ConfirmationError):
+            manager.reject(action.action_id, user_id="other-user")
+        assert manager.get(action.action_id).status is ActionStatus.PENDING
+    finally:
+        manager.close()
+
+
 class _FailingTool(BaseTool):
     tool_id = "failing"
 

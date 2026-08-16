@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import inspect
 import json
 import logging
@@ -27,6 +28,10 @@ class AgentCreateRequest(BaseModel):
 
 class AgentMessageRequest(BaseModel):
     message: str
+
+
+class ConfirmationApproveRequest(BaseModel):
+    fingerprint: str
 
 
 class MemoryStoreRequest(BaseModel):
@@ -64,6 +69,8 @@ class OptimizeRunRequest(BaseModel):
 # ---- Agent routes ----
 
 agents_router = APIRouter(prefix="/v1/agents", tags=["agents"])
+confirmation_router = APIRouter(prefix="/v1/confirmations", tags=["confirmations"])
+_REST_AGENT_CONTROL_TOOLS = frozenset({"agent_spawn", "agent_kill", "agent_send"})
 
 
 def _agent_control_gateway(request: Request):
@@ -75,6 +82,75 @@ def _agent_control_gateway(request: Request):
             detail="Secure agent-control gateway is not configured.",
         )
     return gateway
+
+
+def _confirmation_actor(request: Request) -> str:
+    """Return the authenticated HTTP actor or fail closed."""
+    actor = getattr(request.state, "confirmation_actor_id", "")
+    if not actor:
+        raise HTTPException(
+            status_code=503,
+            detail="HTTP confirmation requires configured bearer authentication.",
+        )
+    return actor
+
+
+def _confirmation_pending_response(result) -> dict[str, Any] | None:
+    """Serialize a central pending action without exposing its arguments."""
+    metadata = result.metadata or {}
+    if metadata.get("status") != "pending" or not metadata.get("action_id"):
+        return None
+    return {
+        "status": "pending_confirmation",
+        "action_id": metadata["action_id"],
+        "fingerprint": metadata.get("fingerprint", ""),
+        "tool_name": result.tool_name,
+        "expires_at": metadata.get("expires_at"),
+    }
+
+
+def _rest_pending_action(request: Request, action_id: str, actor: str):
+    """Return a pending action owned by this HTTP actor, without enumeration."""
+    gateway = _agent_control_gateway(request)
+    manager = getattr(request.app.state, "confirmation_manager", None)
+    if (
+        manager is None
+        or getattr(gateway.executor, "_confirmation_manager", None) is not manager
+    ):
+        raise HTTPException(
+            status_code=503, detail="Confirmation security context unavailable."
+        )
+    action = manager.get(action_id)
+    if (
+        action is None
+        or action.tool_name not in _REST_AGENT_CONTROL_TOOLS
+        or not hmac.compare_digest(action.user_id, actor)
+        or action.session_id
+        or action.agent_id
+    ):
+        raise HTTPException(status_code=404, detail="Confirmation action not found")
+    if action.status.value == "expired":
+        raise HTTPException(status_code=410, detail="Confirmation action expired")
+    if action.status.value != "pending":
+        raise HTTPException(
+            status_code=409, detail="Confirmation action is no longer pending"
+        )
+    return gateway
+
+
+def _agent_control_result(result):
+    """Preserve normal routes while exposing central pending actions."""
+    pending = _confirmation_pending_response(result)
+    if pending is not None:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=202, content=pending)
+    if result.content == "Confirmation actor is required.":
+        raise HTTPException(
+            status_code=503,
+            detail="HTTP confirmation requires bearer authentication.",
+        )
+    return None
 
 
 def _agent_control_call(tool_name: str, arguments: Dict[str, Any]) -> ToolCall:
@@ -125,9 +201,13 @@ async def create_agent(req: AgentCreateRequest, request: Request):
         params["tools"] = ",".join(req.tools)
     if req.agent_id:
         params["agent_id"] = req.agent_id
+    actor = getattr(request.state, "confirmation_actor_id", "")
     result = _agent_control_gateway(request).execute(
-        _agent_control_call("agent_spawn", params)
+        _agent_control_call("agent_spawn", params), user_id=actor
     )
+    pending = _agent_control_result(result)
+    if pending is not None:
+        return pending
     if not result.success:
         raise HTTPException(status_code=400, detail=result.content)
     return {
@@ -140,9 +220,13 @@ async def create_agent(req: AgentCreateRequest, request: Request):
 @agents_router.delete("/{agent_id}")
 async def kill_agent(agent_id: str, request: Request):
     """Kill a running agent."""
+    actor = getattr(request.state, "confirmation_actor_id", "")
     result = _agent_control_gateway(request).execute(
-        _agent_control_call("agent_kill", {"agent_id": agent_id})
+        _agent_control_call("agent_kill", {"agent_id": agent_id}), user_id=actor
     )
+    pending = _agent_control_result(result)
+    if pending is not None:
+        return pending
     if not result.success:
         raise HTTPException(status_code=404, detail=result.content)
     return {"status": "stopped", "agent_id": agent_id}
@@ -151,15 +235,58 @@ async def kill_agent(agent_id: str, request: Request):
 @agents_router.post("/{agent_id}/message")
 async def message_agent(agent_id: str, req: AgentMessageRequest, request: Request):
     """Send a message to a running agent."""
+    actor = getattr(request.state, "confirmation_actor_id", "")
     result = _agent_control_gateway(request).execute(
         _agent_control_call(
             "agent_send",
             {"agent_id": agent_id, "message": req.message},
-        )
+        ),
+        user_id=actor,
     )
+    pending = _agent_control_result(result)
+    if pending is not None:
+        return pending
     if not result.success:
         raise HTTPException(status_code=404, detail=result.content)
     return {"status": "sent", "content": result.content}
+
+
+@confirmation_router.post("/{action_id}/approve")
+async def approve_confirmation(
+    action_id: str, req: ConfirmationApproveRequest, request: Request
+):
+    """Atomically approve and execute one REST agent-control action."""
+    actor = _confirmation_actor(request)
+    gateway = _rest_pending_action(request, action_id, actor)
+    result = gateway.confirm(action_id, req.fingerprint, user_id=actor)
+    if result.success:
+        return {
+            "status": "executed",
+            "content": result.content,
+            "metadata": result.metadata,
+        }
+    if "fingerprint" in result.content.lower():
+        raise HTTPException(
+            status_code=409, detail="Confirmation fingerprint is invalid"
+        )
+    if "Policy denied" in result.content:
+        raise HTTPException(status_code=403, detail=result.content)
+    raise HTTPException(
+        status_code=409, detail="Confirmation action could not be executed"
+    )
+
+
+@confirmation_router.post("/{action_id}/reject")
+async def reject_confirmation(action_id: str, request: Request):
+    """Atomically reject one REST agent-control action without execution."""
+    actor = _confirmation_actor(request)
+    gateway = _rest_pending_action(request, action_id, actor)
+    result = gateway.reject(action_id, user_id=actor)
+    if not result.metadata.get("action_id"):
+        raise HTTPException(
+            status_code=409, detail="Confirmation action could not be rejected"
+        )
+    return {"status": "rejected", "action_id": result.metadata["action_id"]}
 
 
 # ---- Memory routes ----
@@ -1066,6 +1193,7 @@ def include_all_routes(app) -> None:
 
     app.include_router(approval_router)
     app.include_router(agents_router)
+    app.include_router(confirmation_router)
     app.include_router(memory_router)
     app.include_router(traces_router)
     app.include_router(telemetry_router)

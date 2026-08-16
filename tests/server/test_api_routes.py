@@ -8,7 +8,11 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from openjarvis.core.control import ConfirmationManager, PolicyEnforcer  # noqa: E402
+from openjarvis.core.control import (  # noqa: E402
+    ConfirmationManager,
+    ConfirmationStore,
+    PolicyEnforcer,
+)
 from openjarvis.core.control.policy import ToolPolicyConfig  # noqa: E402
 from openjarvis.server.api_routes import include_all_routes  # noqa: E402
 from openjarvis.tools import SecureToolGateway, ToolExecutor  # noqa: E402
@@ -153,6 +157,37 @@ class TestAgentRoutes:
         assert called is False
         action_id = response.json()["detail"].split("action_id=", 1)[1]
         assert manager.get(action_id).tool_name == "agent_spawn"
+
+    def test_authenticated_rest_confirmation_executes_once(self):
+        manager = ConfirmationManager(store=ConfirmationStore())
+        gateway = SecureToolGateway(
+            ToolExecutor(
+                [AgentSpawnTool(), AgentKillTool(), AgentSendTool()],
+                policy_enforcer=PolicyEnforcer(),
+                confirmation_manager=manager,
+                central_confirmation_tools={"agent_spawn", "agent_kill", "agent_send"},
+            )
+        )
+        app = FastAPI()
+        app.state.secure_tool_gateway = gateway
+        app.state.confirmation_manager = manager
+        from openjarvis.server.auth_middleware import AuthMiddleware
+
+        app.add_middleware(AuthMiddleware, api_key="test-key")
+        include_all_routes(app)
+        client = TestClient(app)
+        headers = {"Authorization": "Bearer test-key"}
+        pending = client.post(
+            "/v1/agents", json={"agent_type": "simple"}, headers=headers
+        )
+        assert pending.status_code == 202
+        payload = pending.json()
+        approved = client.post(
+            f"/v1/confirmations/{payload['action_id']}/approve",
+            json={"fingerprint": payload["fingerprint"]},
+            headers=headers,
+        )
+        assert approved.status_code == 200
 
 
 class TestMemoryRoutes:
