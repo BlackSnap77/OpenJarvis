@@ -350,7 +350,7 @@ class RlmContainerRunner:
     ) -> None:
         """Drain one pipe on a daemon thread; the supervisor never blocks on it."""
         try:
-            while chunk := stream.read(4096):
+            while chunk := stream.readline():
                 if stderr_capture is None:
                     events.put((name, chunk))
                 else:
@@ -417,7 +417,6 @@ class RlmContainerRunner:
         return {
             "v": 1,
             "type": "tool_response",
-            "session_id": self._active_session_id,
             "request_id": request_id,
             "result": result,
         }
@@ -558,7 +557,6 @@ class RlmContainerRunner:
                             {
                                 "v": 1,
                                 "type": "execute",
-                                "session_id": name,
                                 "request_id": "execute-1",
                                 "code": code,
                                 "state": {},
@@ -569,12 +567,6 @@ class RlmContainerRunner:
                         return self._failure_with_stderr(
                             "invalid_protocol",
                             "Sandbox worker sent a duplicate ready message.",
-                            stderr_text,
-                        )
-                    if message_type != "ready" and message.get("session_id") != name:
-                        return self._failure_with_stderr(
-                            "invalid_protocol",
-                            "Sandbox worker session mismatch.",
                             stderr_text,
                         )
                     if message_type == "tool_request":
