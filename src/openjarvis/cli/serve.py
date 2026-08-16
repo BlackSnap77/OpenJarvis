@@ -525,6 +525,36 @@ def serve(
 
     # Set up agent scheduler for cron/interval agents
     agent_scheduler = None
+    rest_agent_control_gateway = None
+    try:
+        from openjarvis.tools._stubs import ToolExecutor
+        from openjarvis.tools.agent_tools import (
+            AgentKillTool,
+            AgentSendTool,
+            AgentSpawnTool,
+        )
+        from openjarvis.tools.secure_gateway import SecureToolGateway
+
+        # These administrative REST tools are intentionally independent of
+        # ``resolved_tools``: that list is filtered by the configured agent
+        # tool allow-list and need not contain API control operations.
+        rest_agent_control_executor = ToolExecutor(
+            [AgentSpawnTool(), AgentKillTool(), AgentSendTool()],
+            bus,
+            capability_policy=sec.capability_policy,
+            policy_enforcer=sec.policy_enforcer,
+            confirmation_manager=sec.confirmation_manager,
+        )
+        rest_agent_control_gateway = SecureToolGateway(
+            rest_agent_control_executor,
+            policy_enforcer=sec.policy_enforcer,
+            confirmation_manager=sec.confirmation_manager,
+            audit_logger=sec.audit_logger,
+        )
+    except Exception as exc:
+        # The REST routes fail closed when this dependency is unavailable.
+        logger.warning("REST agent-control gateway unavailable: %s", exc)
+
     if agent_manager is not None:
         try:
             from openjarvis.agents.executor import AgentExecutor
@@ -709,6 +739,8 @@ def serve(
         agent_manager=agent_manager,
         agent_scheduler=agent_scheduler,
         mcp_tools=managed_mcp_tools,
+        policy_enforcer=sec.policy_enforcer,
+        secure_tool_gateway=rest_agent_control_gateway,
         mcp_clients=mcp_clients,
         api_key=api_key,
         webhook_config=webhook_config,

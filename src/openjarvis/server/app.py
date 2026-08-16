@@ -162,6 +162,7 @@ def create_app(
     mcp_tools=None,
     mcp_clients=None,
     policy_enforcer=None,
+    secure_tool_gateway=None,
     api_key: str = "",
     webhook_config: dict | None = None,
     cors_origins: list[str] | None = None,
@@ -237,6 +238,7 @@ def create_app(
     app.state.agent_scheduler = agent_scheduler
     app.state.mcp_tools = list(mcp_tools or [])
     app.state.policy_enforcer = policy_enforcer
+    app.state.secure_tool_gateway = secure_tool_gateway
     app.state._mcp_discovery_lock = threading.Lock()
     app.state._mcp_clients_lock = threading.Lock()
     app.state._mcp_clients = list(mcp_clients or [])

@@ -6,10 +6,13 @@ import asyncio
 import inspect
 import json
 import logging
+import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
+
+from openjarvis.core.types import ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +66,26 @@ class OptimizeRunRequest(BaseModel):
 agents_router = APIRouter(prefix="/v1/agents", tags=["agents"])
 
 
+def _agent_control_gateway(request: Request):
+    """Return the process-owned REST agent-control gateway or fail closed."""
+    gateway = getattr(request.app.state, "secure_tool_gateway", None)
+    if gateway is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Secure agent-control gateway is not configured.",
+        )
+    return gateway
+
+
+def _agent_control_call(tool_name: str, arguments: Dict[str, Any]) -> ToolCall:
+    """Build a uniquely identified ToolCall with canonical JSON arguments."""
+    return ToolCall(
+        id=uuid.uuid4().hex,
+        name=tool_name,
+        arguments=json.dumps(arguments, sort_keys=True, separators=(",", ":")),
+    )
+
+
 @agents_router.get("")
 async def list_agents(request: Request):
     """List available agent types and running agents."""
@@ -97,55 +120,46 @@ async def list_agents(request: Request):
 @agents_router.post("")
 async def create_agent(req: AgentCreateRequest, request: Request):
     """Spawn a new agent."""
-    try:
-        from openjarvis.tools.agent_tools import AgentSpawnTool
-
-        tool = AgentSpawnTool()
-        params = {"agent_type": req.agent_type}
-        if req.tools:
-            params["tools"] = ",".join(req.tools)
-        if req.agent_id:
-            params["agent_id"] = req.agent_id
-        result = tool.execute(**params)
-        if not result.success:
-            raise HTTPException(status_code=400, detail=result.content)
-        return {
-            "status": "created",
-            "content": result.content,
-            "metadata": result.metadata,
-        }
-    except ImportError:
-        raise HTTPException(status_code=501, detail="Agent tools not available")
+    params = {"agent_type": req.agent_type}
+    if req.tools:
+        params["tools"] = ",".join(req.tools)
+    if req.agent_id:
+        params["agent_id"] = req.agent_id
+    result = _agent_control_gateway(request).execute(
+        _agent_control_call("agent_spawn", params)
+    )
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.content)
+    return {
+        "status": "created",
+        "content": result.content,
+        "metadata": result.metadata,
+    }
 
 
 @agents_router.delete("/{agent_id}")
 async def kill_agent(agent_id: str, request: Request):
     """Kill a running agent."""
-    try:
-        from openjarvis.tools.agent_tools import AgentKillTool
-
-        tool = AgentKillTool()
-        result = tool.execute(agent_id=agent_id)
-        if not result.success:
-            raise HTTPException(status_code=404, detail=result.content)
-        return {"status": "stopped", "agent_id": agent_id}
-    except ImportError:
-        raise HTTPException(status_code=501, detail="Agent tools not available")
+    result = _agent_control_gateway(request).execute(
+        _agent_control_call("agent_kill", {"agent_id": agent_id})
+    )
+    if not result.success:
+        raise HTTPException(status_code=404, detail=result.content)
+    return {"status": "stopped", "agent_id": agent_id}
 
 
 @agents_router.post("/{agent_id}/message")
 async def message_agent(agent_id: str, req: AgentMessageRequest, request: Request):
     """Send a message to a running agent."""
-    try:
-        from openjarvis.tools.agent_tools import AgentSendTool
-
-        tool = AgentSendTool()
-        result = tool.execute(agent_id=agent_id, message=req.message)
-        if not result.success:
-            raise HTTPException(status_code=404, detail=result.content)
-        return {"status": "sent", "content": result.content}
-    except ImportError:
-        raise HTTPException(status_code=501, detail="Agent tools not available")
+    result = _agent_control_gateway(request).execute(
+        _agent_control_call(
+            "agent_send",
+            {"agent_id": agent_id, "message": req.message},
+        )
+    )
+    if not result.success:
+        raise HTTPException(status_code=404, detail=result.content)
+    return {"status": "sent", "content": result.content}
 
 
 # ---- Memory routes ----

@@ -1,16 +1,38 @@
 """Tests for extended API routes."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
 fastapi = pytest.importorskip("fastapi")
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from openjarvis.core.control import ConfirmationManager, PolicyEnforcer  # noqa: E402
+from openjarvis.core.control.policy import ToolPolicyConfig  # noqa: E402
 from openjarvis.server.api_routes import include_all_routes  # noqa: E402
+from openjarvis.tools import SecureToolGateway, ToolExecutor  # noqa: E402
+from openjarvis.tools.agent_tools import (  # noqa: E402
+    _SPAWNED_AGENTS,
+    AgentKillTool,
+    AgentSendTool,
+    AgentSpawnTool,
+)
 
 
-def _make_app():
+def _gateway(*, policy=None, manager=None, tools=None):
+    return SecureToolGateway(
+        ToolExecutor(
+            tools or [AgentSpawnTool(), AgentKillTool(), AgentSendTool()],
+            policy_enforcer=policy or PolicyEnforcer(),
+            confirmation_manager=manager or ConfirmationManager(),
+        )
+    )
+
+
+def _make_app(gateway=None):
     app = FastAPI()
+    app.state.secure_tool_gateway = gateway if gateway is not None else _gateway()
     include_all_routes(app)
     return app
 
@@ -25,15 +47,112 @@ class TestAgentRoutes:
         assert "running" in data
 
     def test_create_agent(self):
+        _SPAWNED_AGENTS.clear()
         client = TestClient(_make_app())
         resp = client.post("/v1/agents", json={"agent_type": "simple"})
-        # May succeed or fail depending on agent_tools availability
-        assert resp.status_code in (200, 501)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "created"
 
     def test_kill_nonexistent(self):
         client = TestClient(_make_app())
         resp = client.delete("/v1/agents/nonexistent")
-        assert resp.status_code in (404, 501)
+        assert resp.status_code == 404
+
+    def test_routes_use_supplied_gateway(self):
+        class RecordingGateway:
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, tool_call):
+                from openjarvis.core.types import ToolResult
+
+                self.calls.append(tool_call)
+                return ToolResult(tool_name=tool_call.name, content="ok", success=True)
+
+        gateway = RecordingGateway()
+        client = TestClient(_make_app(gateway))
+
+        create_response = client.post(
+            "/v1/agents", json={"agent_type": "simple"}
+        )
+        assert create_response.status_code == 200
+        assert client.delete("/v1/agents/agent-1").status_code == 200
+        assert client.post(
+            "/v1/agents/agent-1/message", json={"message": "hello"}
+        ).status_code == 200
+        assert [call.name for call in gateway.calls] == [
+            "agent_spawn",
+            "agent_kill",
+            "agent_send",
+        ]
+        assert gateway.calls[0].arguments == '{"agent_type":"simple"}'
+
+    def test_missing_gateway_fails_closed(self):
+        app = FastAPI()
+        include_all_routes(app)
+        response = TestClient(app).post("/v1/agents", json={"agent_type": "simple"})
+        assert response.status_code == 503
+        assert "gateway" in response.json()["detail"].lower()
+
+    def test_create_app_preserves_supplied_gateway(self):
+        from openjarvis.server.app import create_app
+
+        gateway = _gateway()
+        app = create_app(MagicMock(), "test-model", secure_tool_gateway=gateway)
+        assert app.state.secure_tool_gateway is gateway
+
+    def test_policy_deny_does_not_execute_agent_tool(self, monkeypatch):
+        tool = AgentSpawnTool()
+        called = False
+
+        def _execute(**_params):
+            nonlocal called
+            called = True
+            raise AssertionError("denied tool must not execute")
+
+        monkeypatch.setattr(tool, "execute", _execute)
+        policy = PolicyEnforcer()
+        policy.register_tool(ToolPolicyConfig(tool_name="agent_spawn", allowed=False))
+        gateway = _gateway(
+            policy=policy,
+            tools=[tool, AgentKillTool(), AgentSendTool()],
+        )
+
+        response = TestClient(_make_app(gateway)).post(
+            "/v1/agents", json={"agent_type": "simple"}
+        )
+        assert response.status_code == 400
+        assert called is False
+        assert "Policy denied" in response.json()["detail"]
+
+    def test_confirmation_required_does_not_execute_agent_tool(self, monkeypatch):
+        tool = AgentSpawnTool()
+        called = False
+
+        def _execute(**_params):
+            nonlocal called
+            called = True
+            raise AssertionError("unconfirmed tool must not execute")
+
+        monkeypatch.setattr(tool, "execute", _execute)
+        policy = PolicyEnforcer()
+        policy.register_tool(
+            ToolPolicyConfig(tool_name="agent_spawn", requires_confirmation=True)
+        )
+        manager = ConfirmationManager()
+        gateway = _gateway(
+            policy=policy,
+            manager=manager,
+            tools=[tool, AgentKillTool(), AgentSendTool()],
+        )
+
+        response = TestClient(_make_app(gateway)).post(
+            "/v1/agents", json={"agent_type": "simple"}
+        )
+        assert response.status_code == 400
+        assert called is False
+        action_id = response.json()["detail"].split("action_id=", 1)[1]
+        assert manager.get(action_id).tool_name == "agent_spawn"
 
 
 class TestMemoryRoutes:
