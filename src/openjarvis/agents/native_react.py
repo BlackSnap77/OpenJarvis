@@ -238,7 +238,7 @@ class NativeReActAgent(ToolUsingAgent):
                     messages.append(Message(role=Role.USER, content=observation))
                     continue
 
-            tool_result = self._executor.execute(tool_call)
+            tool_result = self._execution_gateway.execute(tool_call)
             all_tool_results.append(tool_result)
 
             observation = f"Observation: {tool_result.content}"

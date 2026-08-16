@@ -555,6 +555,7 @@ def serve(
             from openjarvis.sessions.session import SessionStore
             from openjarvis.system import JarvisSystem
             from openjarvis.tools._stubs import ToolExecutor
+            from openjarvis.tools.secure_gateway import SecureToolGateway
 
             _sched_session_store = None
             if config.sessions.enabled:
@@ -571,9 +572,21 @@ def serve(
                 except Exception as exc:
                     logger.debug("Scheduler session store init failed: %s", exc)
 
-            _sched_tool_executor = (
-                ToolExecutor(resolved_tools, bus) if resolved_tools else None
+            _sched_tool_executor = ToolExecutor(
+                resolved_tools,
+                bus,
+                capability_policy=sec.capability_policy,
+                policy_enforcer=sec.policy_enforcer,
+                confirmation_manager=sec.confirmation_manager,
             )
+
+            _sched_secure_tool_gateway = SecureToolGateway(
+                _sched_tool_executor,
+                policy_enforcer=sec.policy_enforcer,
+                confirmation_manager=sec.confirmation_manager,
+                audit_logger=sec.audit_logger,
+            )
+            sec.secure_tool_gateway = _sched_secure_tool_gateway
 
             system = JarvisSystem(
                 config=config,
@@ -591,6 +604,11 @@ def serve(
                 trace_store=_trace_store,
                 session_store=_sched_session_store,
                 capability_policy=sec.capability_policy,
+                audit_logger=sec.audit_logger,
+                policy_enforcer=sec.policy_enforcer,
+                confirmation_manager=sec.confirmation_manager,
+                confirmation_store=sec.confirmation_store,
+                secure_tool_gateway=_sched_secure_tool_gateway,
                 agent_manager=agent_manager,
                 agent_executor=executor,
                 _mcp_clients=mcp_clients,

@@ -520,12 +520,42 @@ class AgentExecutor:
             # Managed agents construct their own ToolExecutor.  Bind it to
             # the system's single control layer so it cannot bypass policy or
             # confirmation checks used by the system executor.
-            inner_executor._policy_enforcer = getattr(
+            policy_enforcer = getattr(
                 self._system, "policy_enforcer", None
             )
-            inner_executor._confirmation_manager = getattr(
+            confirmation_manager = getattr(
                 self._system, "confirmation_manager", None
             )
+
+            inner_executor._policy_enforcer = policy_enforcer
+            inner_executor._confirmation_manager = confirmation_manager
+
+            # The managed agent owns this ToolExecutor, so the gateway must
+            # wrap this exact executor rather than the scheduler's separate
+            # system executor.
+            if policy_enforcer is None and confirmation_manager is None:
+                # Legacy/test systems without the central security layer keep
+                # the historical execution path.
+                agent_instance._execution_gateway = inner_executor
+            else:
+                # A partially wired production security context must never
+                # fall back to unsecured direct execution.
+                if policy_enforcer is None or confirmation_manager is None:
+                    raise FatalError(
+                        "Managed-agent secure execution requires both "
+                        "PolicyEnforcer and ConfirmationManager"
+                    )
+
+                from openjarvis.tools.secure_gateway import SecureToolGateway
+
+                agent_instance._execution_gateway = SecureToolGateway(
+                    inner_executor,
+                    policy_enforcer=policy_enforcer,
+                    confirmation_manager=confirmation_manager,
+                    audit_logger=getattr(
+                        self._system, "audit_logger", None
+                    ),
+                )
 
         logger.info(
             "Agent %s: tool wiring — %d tools resolved (%s), agent class %s",

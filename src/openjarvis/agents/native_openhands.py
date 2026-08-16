@@ -343,7 +343,7 @@ class NativeOpenHandsAgent(ToolUsingAgent):
                     )
                 )
                 for tc in native_calls:
-                    tool_result = self._executor.execute(tc)
+                    tool_result = self._execution_gateway.execute(tc)
                     all_tool_results.append(tool_result)
                     obs_text = tool_result.content
                     if len(obs_text) > 4000:
@@ -371,7 +371,7 @@ class NativeOpenHandsAgent(ToolUsingAgent):
                     name="code_interpreter",
                     arguments=_json.dumps({"code": code}),
                 )
-                tool_result = self._executor.execute(tool_call)
+                tool_result = self._execution_gateway.execute(tool_call)
                 all_tool_results.append(tool_result)
 
                 obs_text = tool_result.content
@@ -390,7 +390,7 @@ class NativeOpenHandsAgent(ToolUsingAgent):
                 tool_call = ToolCall(
                     id=f"tool_{turns}", name=action, arguments=action_input
                 )
-                tool_result = self._executor.execute(tool_call)
+                tool_result = self._execution_gateway.execute(tool_call)
                 all_tool_results.append(tool_result)
 
                 obs_text = tool_result.content

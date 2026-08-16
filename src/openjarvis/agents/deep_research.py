@@ -336,7 +336,7 @@ class DeepResearchAgent(ToolUsingAgent):
                         )
                         continue
 
-                tool_result = self._executor.execute(tc)
+                tool_result = self._execution_gateway.execute(tc)
                 all_tool_results.append(tool_result)
 
                 messages.append(

@@ -413,7 +413,7 @@ class ProactiveAgent(ToolUsingAgent):
                 }
             ),
         )
-        collect_result = self._executor.execute(collect_call)
+        collect_result = self._execution_gateway.execute(collect_call)
         if not collect_result.success or not collect_result.content.strip():
             self._emit_turn_end(turns=1)
             return AgentResult(
@@ -502,7 +502,7 @@ class ProactiveAgent(ToolUsingAgent):
                 name="execute_pending_actions",
                 arguments=json.dumps({"action_ids": auto_approve_ids}),
             )
-            exec_result = self._executor.execute(exec_call)
+            exec_result = self._execution_gateway.execute(exec_call)
             if exec_result.success and exec_result.content:
                 try:
                     executed_results = json.loads(exec_result.content)
@@ -523,7 +523,7 @@ class ProactiveAgent(ToolUsingAgent):
                     }
                 ),
             )
-            self._executor.execute(send_call)
+            self._execution_gateway.execute(send_call)
             for action in pending_actions:
                 store.update_status(action.id, action.status, notification_sent=True)
 

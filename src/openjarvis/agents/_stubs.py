@@ -379,6 +379,11 @@ class ToolUsingAgent(BaseAgent):
             policy_enforcer=policy_enforcer,
             confirmation_manager=confirmation_manager,
         )
+
+        # Tool execution entry point. Managed-agent runtimes replace this
+        # with SecureToolGateway after binding the shared security context.
+        self._execution_gateway = self._executor
+
         # Resolve max_turns: explicit arg > config > class default > 10
         if max_turns is not None:
             self._max_turns = max_turns

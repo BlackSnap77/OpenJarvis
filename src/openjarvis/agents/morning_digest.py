@@ -137,7 +137,7 @@ class MorningDigestAgent(ToolUsingAgent):
             name="digest_collect",
             arguments=json.dumps({"sources": sources, "hours_back": 24}),
         )
-        collect_result = self._executor.execute(collect_call)
+        collect_result = self._execution_gateway.execute(collect_call)
         collected_data = collect_result.content
 
         # Step 2: Synthesize narrative via LLM
@@ -217,7 +217,7 @@ class MorningDigestAgent(ToolUsingAgent):
                 }
             ),
         )
-        tts_result = self._executor.execute(tts_call)
+        tts_result = self._execution_gateway.execute(tts_call)
         audio_path = (
             tts_result.metadata.get("audio_path", "") if tts_result.success else ""
         )

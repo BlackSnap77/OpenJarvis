@@ -293,7 +293,7 @@ class MonitorOperativeAgent(ToolUsingAgent):
                         name=action,
                         arguments=action_input,
                     )
-                    tool_result = self._executor.execute(tc)
+                    tool_result = self._execution_gateway.execute(tc)
                     all_tool_results.append(tool_result)
                     observation_content = self._compress_observation(
                         tool_result.content
@@ -337,7 +337,7 @@ class MonitorOperativeAgent(ToolUsingAgent):
                         )
                         continue
 
-                tool_result = self._executor.execute(tc)
+                tool_result = self._execution_gateway.execute(tc)
                 all_tool_results.append(tool_result)
 
                 # Track explicit state storage

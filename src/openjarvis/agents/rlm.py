@@ -332,7 +332,7 @@ class RLMAgent(ToolUsingAgent):
                 )
             )
             for tc in tool_calls:
-                tr = self._executor.execute(tc)
+                tr = self._execution_gateway.execute(tc)
                 messages.append(
                     Message(
                         role=Role.TOOL,
@@ -382,7 +382,7 @@ class RLMAgent(ToolUsingAgent):
             name=tool_name,
             arguments=json.dumps(params),
         )
-        tr = self._executor.execute(tc)
+        tr = self._execution_gateway.execute(tc)
         getattr(self, "_repl_tool_results", []).append(tr)
         return tr.content
 
