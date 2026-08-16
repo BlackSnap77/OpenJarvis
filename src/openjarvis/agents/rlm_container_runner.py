@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from openjarvis.agents.rlm_sandbox_protocol import (
@@ -28,6 +29,78 @@ from openjarvis.core.types import ToolCall
 from openjarvis.tools._stubs import ToolExecutor
 from openjarvis.tools.secure_gateway import SecureToolGateway
 
+_SECCOMP_ACTIONS = frozenset(
+    {
+        "SCMP_ACT_ALLOW",
+        "SCMP_ACT_ERRNO",
+        "SCMP_ACT_KILL",
+        "SCMP_ACT_KILL_PROCESS",
+        "SCMP_ACT_KILL_THREAD",
+        "SCMP_ACT_LOG",
+        "SCMP_ACT_NOTIFY",
+        "SCMP_ACT_TRACE",
+        "SCMP_ACT_TRAP",
+    }
+)
+_REQUIRED_SECCOMP_SYSCALLS = frozenset(
+    {
+        "access",
+        "arch_prctl",
+        "brk",
+        "close",
+        "execve",
+        "execveat",
+        "exit",
+        "exit_group",
+        "fcntl",
+        "fstat",
+        "futex",
+        "getcwd",
+        "getdents64",
+        "getegid",
+        "geteuid",
+        "getgid",
+        "getpid",
+        "getrandom",
+        "gettid",
+        "getuid",
+        "ioctl",
+        "lseek",
+        "madvise",
+        "mmap",
+        "mprotect",
+        "munmap",
+        "newfstatat",
+        "openat",
+        "pread64",
+        "prlimit64",
+        "read",
+        "readlink",
+        "readlinkat",
+        "rseq",
+        "rt_sigaction",
+        "rt_sigprocmask",
+        "rt_sigreturn",
+        "sched_getaffinity",
+        "set_robust_list",
+        "set_tid_address",
+        "statx",
+        "sysinfo",
+        "uname",
+        "write",
+    }
+)
+
+
+def _default_seccomp_profile() -> str:
+    return str(
+        Path(__file__).resolve().parents[3]
+        / "deploy"
+        / "docker"
+        / "seccomp"
+        / "rlm-sandbox-seccomp.json"
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class RlmContainerConfig:
@@ -37,6 +110,8 @@ class RlmContainerConfig:
     cpu_limit: str = "0.5"
     pids_limit: int = 32
     max_stderr_chars: int = 4096
+    allowed_tools: tuple[str, ...] = ()
+    seccomp_profile: str = _default_seccomp_profile()
 
     def __post_init__(self) -> None:
         if not _is_positive_docker_quantity(self.memory_limit):
@@ -49,6 +124,10 @@ class RlmContainerConfig:
             raise ValueError("timeout_seconds must be greater than zero")
         if self.max_stderr_chars < 0:
             raise ValueError("max_stderr_chars must not be negative")
+        if any(not isinstance(name, str) or not name for name in self.allowed_tools):
+            raise ValueError("allowed_tools must contain non-empty tool names")
+        if not isinstance(self.seccomp_profile, str) or not self.seccomp_profile:
+            raise ValueError("seccomp_profile must be a non-empty path")
 
 
 def _is_positive_docker_quantity(value: str) -> bool:
@@ -104,8 +183,11 @@ class RlmContainerRunner:
         self._popen_factory = popen_factory
         self._cleanup_runner = cleanup_runner
 
-    def _docker_args(self, docker: str, name: str) -> list[str]:
+    def _docker_args(
+        self, docker: str, name: str, seccomp_profile: Optional[Path] = None
+    ) -> list[str]:
         # No -v/--volume, no --env-file, no inherited environment, no network.
+        profile = seccomp_profile or Path(self._config.seccomp_profile).resolve()
         return [
             docker,
             "run",
@@ -121,6 +203,8 @@ class RlmContainerRunner:
             "ALL",
             "--security-opt",
             "no-new-privileges:true",
+            "--security-opt",
+            f"seccomp={profile}",
             "--pids-limit",
             str(self._config.pids_limit),
             "--memory",
@@ -145,6 +229,52 @@ class RlmContainerRunner:
 
     def _result(self, code: str, detail: str) -> RlmExecutionResult:
         return RlmExecutionResult(success=False, stderr=detail, error_code=code)
+
+    def _validated_seccomp_profile(self) -> tuple[Optional[Path], Optional[str]]:
+        """Resolve and strictly validate the required Docker seccomp profile."""
+        profile = Path(self._config.seccomp_profile).expanduser().resolve()
+        if not profile.is_file():
+            return None, f"Seccomp profile is missing: {profile}"
+        try:
+            document = json.loads(profile.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            return None, f"Seccomp profile is invalid: {exc}"
+        if not isinstance(document, dict):
+            return None, "Seccomp profile is invalid: root must be an object."
+        default_action = document.get("defaultAction")
+        if default_action not in _SECCOMP_ACTIONS:
+            return None, "Seccomp profile is invalid: defaultAction is unknown."
+        if default_action != "SCMP_ACT_ERRNO":
+            return None, "Seccomp profile is invalid: defaultAction must deny."
+        rules = document.get("syscalls")
+        if not isinstance(rules, list) or not rules:
+            return None, "Seccomp profile is invalid: syscall rules must not be empty."
+
+        allowed_syscalls: set[str] = set()
+        for rule in rules:
+            if not isinstance(rule, dict) or set(rule) != {"names", "action"}:
+                return None, "Seccomp profile is invalid: malformed syscall entry."
+            names, action = rule.get("names"), rule.get("action")
+            if action not in _SECCOMP_ACTIONS:
+                return None, "Seccomp profile is invalid: syscall action is unknown."
+            if action != "SCMP_ACT_ALLOW":
+                return None, "Seccomp profile is invalid: rules must be allowlists."
+            if (
+                not isinstance(names, list)
+                or not names
+                or any(not isinstance(name, str) or not name for name in names)
+                or len(names) != len(set(names))
+            ):
+                return None, "Seccomp profile is invalid: malformed syscall names."
+            allowed_syscalls.update(names)
+
+        missing = sorted(_REQUIRED_SECCOMP_SYSCALLS - allowed_syscalls)
+        if missing:
+            return None, (
+                "Seccomp profile is invalid: required runtime syscall(s) missing: "
+                + ", ".join(missing)
+            )
+        return profile, None
 
     @staticmethod
     def _validate_gateway(gateway: SecureToolGateway) -> None:
@@ -171,6 +301,10 @@ class RlmContainerRunner:
             raise ValueError("timeout_seconds must be greater than zero")
         if config.max_stderr_chars < 0:
             raise ValueError("max_stderr_chars must not be negative")
+        if any(not isinstance(name, str) or not name for name in config.allowed_tools):
+            raise ValueError("allowed_tools must contain non-empty tool names")
+        if not isinstance(config.seccomp_profile, str) or not config.seccomp_profile:
+            raise ValueError("seccomp_profile must be a non-empty path")
 
     @staticmethod
     def _validate_limits(limits: RlmSandboxLimits) -> None:
@@ -238,11 +372,11 @@ class RlmContainerRunner:
 
     def _sanitize_tool_result(self, result: Any) -> dict[str, Any]:
         metadata = getattr(result, "metadata", {}) or {}
-        allowed = {
-            key: metadata[key]
-            for key in ("action_id", "status", "fingerprint")
-            if key in metadata
-        }
+        allowed = (
+            {"status": "pending_confirmation"}
+            if metadata.get("status") == "pending_confirmation"
+            else {}
+        )
         content = str(getattr(result, "content", ""))[: self._limits.max_output_chars]
         return {
             "success": bool(getattr(result, "success", False)),
@@ -259,7 +393,10 @@ class RlmContainerRunner:
         seen.add(request_id)
         executor = getattr(self._gateway, "executor", None)
         tools = getattr(executor, "_tools", {})
-        if message["tool_name"] not in tools:
+        if (
+            message["tool_name"] not in self._config.allowed_tools
+            or message["tool_name"] not in tools
+        ):
             result = {
                 "success": False,
                 "content": "Tool is not available to this sandbox session.",
@@ -280,6 +417,7 @@ class RlmContainerRunner:
         return {
             "v": 1,
             "type": "tool_response",
+            "session_id": self._active_session_id,
             "request_id": request_id,
             "result": result,
         }
@@ -308,6 +446,10 @@ class RlmContainerRunner:
     ) -> RlmExecutionResult:
         if timeout is not None and timeout <= 0:
             return self._result("timeout", "Sandbox worker timed out.")
+        seccomp_profile, seccomp_error = self._validated_seccomp_profile()
+        if seccomp_error:
+            return self._result("seccomp_profile_invalid", seccomp_error)
+        assert seccomp_profile is not None
         docker = self._docker_resolver("docker")
         if not docker:
             return self._result(
@@ -315,9 +457,10 @@ class RlmContainerRunner:
                 "Docker is unavailable; RLM execution remains disabled.",
             )
         name = f"oj-rlm-{uuid.uuid4().hex[:12]}"
+        self._active_session_id = name
         try:
             process = self._popen_factory(
-                self._docker_args(docker, name),
+                self._docker_args(docker, name, seccomp_profile),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -357,9 +500,14 @@ class RlmContainerRunner:
                     "session_id": name,
                     "limits": self._limits.to_dict(),
                     "context": None,
-                    "tools": list(
-                        getattr(getattr(self._gateway, "executor", None), "_tools", {})
-                    ),
+                    "tools": [
+                        name
+                        for name in self._config.allowed_tools
+                        if name
+                        in getattr(
+                            getattr(self._gateway, "executor", None), "_tools", {}
+                        )
+                    ],
                 },
             )
             while True:
@@ -410,6 +558,7 @@ class RlmContainerRunner:
                             {
                                 "v": 1,
                                 "type": "execute",
+                                "session_id": name,
                                 "request_id": "execute-1",
                                 "code": code,
                                 "state": {},
@@ -420,6 +569,12 @@ class RlmContainerRunner:
                         return self._failure_with_stderr(
                             "invalid_protocol",
                             "Sandbox worker sent a duplicate ready message.",
+                            stderr_text,
+                        )
+                    if message_type != "ready" and message.get("session_id") != name:
+                        return self._failure_with_stderr(
+                            "invalid_protocol",
+                            "Sandbox worker session mismatch.",
                             stderr_text,
                         )
                     if message_type == "tool_request":

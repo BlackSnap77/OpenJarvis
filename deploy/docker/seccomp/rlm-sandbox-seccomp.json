@@ -1,0 +1,65 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "archMap": [
+    {
+      "architecture": "SCMP_ARCH_X86_64",
+      "subArchitectures": [
+        "SCMP_ARCH_X86",
+        "SCMP_ARCH_X32"
+      ]
+    }
+  ],
+  "syscalls": [
+    {
+      "names": [
+        "read",
+        "write",
+        "close",
+        "access",
+        "arch_prctl",
+        "execve",
+        "execveat",
+        "fcntl",
+        "fstat",
+        "newfstatat",
+        "pread64",
+        "lseek",
+        "mmap",
+        "mprotect",
+        "munmap",
+        "madvise",
+        "brk",
+        "rt_sigaction",
+        "rt_sigprocmask",
+        "rt_sigreturn",
+        "ioctl",
+        "exit",
+        "exit_group",
+        "getpid",
+        "gettid",
+        "getuid",
+        "geteuid",
+        "getgid",
+        "getegid",
+        "getcwd",
+        "getdents64",
+        "futex",
+        "set_tid_address",
+        "set_robust_list",
+        "rseq",
+        "clock_gettime",
+        "nanosleep",
+        "openat",
+        "readlink",
+        "readlinkat",
+        "statx",
+        "getrandom",
+        "prlimit64",
+        "sched_getaffinity",
+        "sysinfo",
+        "uname"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    }
+  ]
+}

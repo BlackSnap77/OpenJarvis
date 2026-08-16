@@ -1,8 +1,17 @@
 FROM python:3.12.13-slim-bookworm@sha256:76d4b7b6305788c6b4c6a19d6a22a3921bf802e9af4d5e1e5bd771208dba74bf
-RUN addgroup --system rlm && adduser --system --ingroup rlm --uid 10001 rlm
+RUN addgroup --system rlm \
+    && adduser --system --ingroup rlm --uid 10001 rlm \
+    && mkdir -p /opt/rlm/rlm_interpreter
 WORKDIR /opt/rlm
 COPY src/openjarvis/agents/rlm_sandbox_protocol.py rlm_sandbox_protocol.py
 COPY src/openjarvis/agents/rlm_worker.py rlm_worker.py
-COPY src/openjarvis/agents/rlm_interpreter rlm_interpreter
+COPY src/openjarvis/agents/rlm_interpreter/__init__.py rlm_interpreter/__init__.py
+COPY src/openjarvis/agents/rlm_interpreter/core.py rlm_interpreter/core.py
+COPY src/openjarvis/agents/rlm_interpreter/errors.py rlm_interpreter/errors.py
+COPY src/openjarvis/agents/rlm_interpreter/events.py rlm_interpreter/events.py
+COPY src/openjarvis/agents/rlm_interpreter/limits.py rlm_interpreter/limits.py
+COPY src/openjarvis/agents/rlm_interpreter/runtime.py rlm_interpreter/runtime.py
+COPY src/openjarvis/agents/rlm_interpreter/state.py rlm_interpreter/state.py
+COPY src/openjarvis/agents/rlm_interpreter/validator.py rlm_interpreter/validator.py
 USER rlm
 ENTRYPOINT ["python", "/opt/rlm/rlm_worker.py"]
