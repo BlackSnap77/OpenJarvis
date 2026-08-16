@@ -367,6 +367,8 @@ def _prefetch_context(
     max_uses: int = 8,
     search_backend: str = "provider",
     tavily_max_results: int = 5,
+    secure_tool_gateway: Any = None,
+    actor_context: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Use Anthropic web_search to fetch real source material the worker can read.
 
@@ -385,7 +387,12 @@ def _prefetch_context(
     }
     if search_backend == "tavily":
         try:
-            res = tavily_search_context(question, max_results=tavily_max_results)
+            res = tavily_search_context(
+                question,
+                max_results=tavily_max_results,
+                secure_tool_gateway=secure_tool_gateway,
+                actor_context=actor_context,
+            )
             out.update(
                 text=res["text"],
                 cost_usd=float(res["cost_usd"]),
@@ -596,6 +603,8 @@ class MinionsAgent(LocalCloudAgent):
                 max_uses=ws_max_uses,
                 search_backend=str(cfg.get("search_backend", "provider")).lower(),
                 tavily_max_results=int(cfg.get("tavily_max_results", 5)),
+                secure_tool_gateway=getattr(self, "_web_search_gateway", None),
+                actor_context=getattr(self, "_web_search_actor_context", None),
             )
 
         if prefetch.get("text"):

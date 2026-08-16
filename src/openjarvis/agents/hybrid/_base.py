@@ -55,6 +55,7 @@ from openjarvis.agents.hybrid._prices import (
 from openjarvis.agents.hybrid._prices import (
     cost as estimate_cost,
 )
+from openjarvis.core.types import ToolCall
 from openjarvis.engine._stubs import InferenceEngine
 
 # Install OpenAI SDK retry + per-org concurrency cap at import time so
@@ -112,12 +113,30 @@ def tavily_search_context(
     query: str,
     *,
     max_results: int = 5,
+    secure_tool_gateway: Any = None,
+    actor_context: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """Run OpenJarvis WebSearchTool and return accounting-friendly metadata."""
-    from openjarvis.tools.web_search import WebSearchTool
-
-    tool = WebSearchTool(max_results=max_results)
-    res = tool.execute(query=query, max_results=max_results)
+    """Run web search only through an explicitly supplied security gateway."""
+    if secure_tool_gateway is None:
+        return {
+            "text": "",
+            "success": False,
+            "engine": "unavailable",
+            "credits": 0,
+            "cost_usd": 0.0,
+            "n_searches": 0,
+            "error": "Hybrid Tavily search requires a secure tool gateway.",
+        }
+    call = ToolCall(
+        id=f"hybrid-web-search-{time.time_ns()}",
+        name="web_search",
+        arguments=json.dumps(
+            {"query": query, "max_results": max_results},
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+    )
+    res = secure_tool_gateway.execute(call, **dict(actor_context or {}))
     meta = dict(res.metadata or {})
     engine = str(meta.get("engine") or "unknown")
     credits = 0

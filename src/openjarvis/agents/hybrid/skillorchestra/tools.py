@@ -339,7 +339,12 @@ def run_search(
     search_uses = 0
 
     if search_backend == "tavily":
-        res = tavily_search_context(query, max_results=tavily_max_results)
+        res = tavily_search_context(
+            query,
+            max_results=tavily_max_results,
+            secure_tool_gateway=getattr(agent, "_web_search_gateway", None),
+            actor_context=getattr(agent, "_web_search_actor_context", None),
+        )
         contents.append(res["text"])
         search_uses = int(res["n_searches"])
         cost += float(res["cost_usd"])

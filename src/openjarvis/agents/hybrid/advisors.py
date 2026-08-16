@@ -283,6 +283,8 @@ class AdvisorsAgent(LocalCloudAgent):
             res = tavily_search_context(
                 query or user,
                 max_results=int(self._cfg.get("tavily_max_results", 5)),
+                secure_tool_gateway=getattr(self, "_web_search_gateway", None),
+                actor_context=getattr(self, "_web_search_actor_context", None),
             )
             grounded_user = (
                 f"Web search results:\n{res['text']}\n\n"

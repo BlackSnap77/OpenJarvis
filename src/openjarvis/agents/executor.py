@@ -565,6 +565,48 @@ class AgentExecutor:
                     ),
                 )
 
+        # Hybrid agents intentionally use raw cloud SDKs and do not inherit
+        # ToolUsingAgent's executor. Their optional Tavily prefetch must still
+        # cross the same process-owned security boundary.
+        if agent_instance.__class__.__module__.startswith("openjarvis.agents.hybrid"):
+            policy_enforcer = getattr(self._system, "policy_enforcer", None)
+            confirmation_manager = getattr(self._system, "confirmation_manager", None)
+            capability_policy = getattr(self._system, "capability_policy", None)
+            confirmation_store = getattr(self._system, "confirmation_store", None)
+            if (
+                policy_enforcer is not None
+                and confirmation_manager is not None
+                and confirmation_store is not None
+                and capability_policy is not None
+            ):
+                from openjarvis.tools._stubs import ToolExecutor
+                from openjarvis.tools.secure_gateway import SecureToolGateway
+                from openjarvis.tools.web_search import WebSearchTool
+
+                web_executor = ToolExecutor(
+                    [WebSearchTool()],
+                    capability_policy=capability_policy,
+                    agent_id=agent["id"],
+                    policy_enforcer=policy_enforcer,
+                    confirmation_manager=confirmation_manager,
+                )
+                agent_instance._web_search_gateway = SecureToolGateway(
+                    web_executor,
+                    policy_enforcer=policy_enforcer,
+                    confirmation_manager=confirmation_manager,
+                    audit_logger=getattr(self._system, "audit_logger", None),
+                )
+                agent_instance._web_search_actor_context = {"agent_id": agent["id"]}
+                agent_instance._cfg["_secure_web_search_gateway"] = (
+                    agent_instance._web_search_gateway
+                )
+                agent_instance._cfg["_secure_web_search_actor_context"] = (
+                    agent_instance._web_search_actor_context
+                )
+            else:
+                agent_instance._web_search_gateway = None
+                agent_instance._web_search_actor_context = {}
+
         logger.info(
             "Agent %s: tool wiring — %d tools resolved (%s), agent class %s",
             agent["name"],

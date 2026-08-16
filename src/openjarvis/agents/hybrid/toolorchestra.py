@@ -369,6 +369,9 @@ def _paper_expert_for(
 def _call_tavily_search(
     query: str,
     max_results: int = 5,
+    *,
+    secure_tool_gateway: Any = None,
+    actor_context: Optional[Dict[str, str]] = None,
 ) -> Tuple[str, int, int, float, int]:
     """One-shot Tavily search. Returns (text, p_tok=0, c_tok=0, cost, uses).
 
@@ -376,7 +379,12 @@ def _call_tavily_search(
     accounting layer separately tallies tool-call counts. Falls back to
     DuckDuckGo if Tavily is unreachable (see ``WebSearchTool``).
     """
-    res = tavily_search_context(query, max_results=max_results)
+    res = tavily_search_context(
+        query,
+        max_results=max_results,
+        secure_tool_gateway=secure_tool_gateway,
+        actor_context=actor_context,
+    )
     return res["text"], 0, 0, float(res["cost_usd"]), int(res["n_searches"])
 
 
@@ -1033,6 +1041,8 @@ def _call_worker(
         text, p, c, extra, n_searches = _call_tavily_search(
             str(prompt),
             max_results=max_results,
+            secure_tool_gateway=cfg.get("_secure_web_search_gateway"),
+            actor_context=cfg.get("_secure_web_search_actor_context"),
         )
         return text, p, c, False, extra, n_searches
     if wtype == "openrouter":

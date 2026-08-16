@@ -579,6 +579,8 @@ def _call_worker(
     *,
     web_search_tool: Optional[Dict[str, Any]] = None,
     web_search_max_uses: int = 8,
+    secure_tool_gateway: Any = None,
+    actor_context: Optional[Dict[str, str]] = None,
 ) -> Tuple[str, int, int, bool, int, float]:
     """Returns (text, p_tok, c_tok, is_local, n_web_searches, extra_cost).
 
@@ -600,6 +602,8 @@ def _call_worker(
         res = tavily_search_context(
             prompt,
             max_results=int(cfg.get("tavily_max_results", 5)),
+            secure_tool_gateway=secure_tool_gateway,
+            actor_context=actor_context,
         )
         prompt = (
             f"Web search results:\n{res['text']}\n\n"
@@ -1001,6 +1005,8 @@ class ConductorAgent(LocalCloudAgent):
                             cfg,
                             web_search_tool=ws_tool,
                             web_search_max_uses=ws_max_uses,
+                            secure_tool_gateway=getattr(self, "_web_search_gateway", None),
+                            actor_context=getattr(self, "_web_search_actor_context", None),
                         )
                     )
 
