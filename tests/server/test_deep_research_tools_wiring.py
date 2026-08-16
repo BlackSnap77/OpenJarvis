@@ -17,6 +17,11 @@ except ImportError:
     HAS_FASTAPI = False
 
 from openjarvis.connectors.store import KnowledgeStore
+from openjarvis.core.control import (
+    ConfirmationManager,
+    ConfirmationStore,
+    PolicyEnforcer,
+)
 from openjarvis.core.registry import ToolRegistry
 from openjarvis.core.types import Role, ToolResult
 from openjarvis.tools._stubs import BaseTool, ToolSpec
@@ -166,6 +171,7 @@ async def test_server_deep_research_merges_and_executes_all_tool_sources(
     _ConfiguredResearchProbe.calls = 0
 
     mcp_tool = _MCPResearchProbe()
+    confirmation_store = ConfirmationStore()
     app_state = SimpleNamespace(
         config=SimpleNamespace(memory_files=None, system_prompt=None),
         memory_backend=None,
@@ -177,6 +183,11 @@ async def test_server_deep_research_merges_and_executes_all_tool_sources(
             [mcp_tool.to_openai_function()],
             {mcp_tool.spec.name: mcp_tool},
         ),
+        capability_policy=None,
+        policy_enforcer=PolicyEnforcer(),
+        confirmation_manager=ConfirmationManager(store=confirmation_store),
+        confirmation_store=confirmation_store,
+        audit_logger=None,
     )
     manager = MagicMock()
     manager.list_messages.return_value = []

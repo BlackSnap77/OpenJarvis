@@ -13,6 +13,24 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from openjarvis.agents.manager import AgentManager
+from openjarvis.core.control import (
+    ConfirmationManager,
+    ConfirmationStore,
+    PolicyEnforcer,
+)
+from openjarvis.core.control.policy import ToolPolicyConfig
+from openjarvis.core.types import ToolCall, ToolResult
+from openjarvis.tools import BaseTool, ToolSpec
+
+
+def _attach_managed_security_state(app) -> None:
+    """Attach one coherent security context to a server test app."""
+    store = ConfirmationStore()
+    app.state.capability_policy = None
+    app.state.policy_enforcer = PolicyEnforcer()
+    app.state.confirmation_manager = ConfirmationManager(store=store)
+    app.state.confirmation_store = store
+    app.state.audit_logger = None
 
 
 @pytest.fixture
@@ -350,6 +368,7 @@ class TestAgentManagerStreaming:
         app = FastAPI()
         app.state.engine = _mock_engine
         app.state.bus = None
+        _attach_managed_security_state(app)
 
         routers = create_agent_manager_router(manager)
         for r in routers:
@@ -474,6 +493,7 @@ class TestAgentManagerStreaming:
         app = FastAPI()
         app.state.engine = error_engine
         app.state.bus = None
+        _attach_managed_security_state(app)
         routers = create_agent_manager_router(manager)
         for r in routers:
             app.include_router(r)
@@ -487,6 +507,170 @@ class TestAgentManagerStreaming:
         assert resp.status_code == 200
         assert "Error:" in resp.text or "error" in resp.text.lower()
         assert "data: [DONE]" in resp.text
+
+
+@pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+class TestManagedRuntimeSecurityWiring:
+    class _CountingTool(BaseTool):
+        tool_id = "managed_security_probe"
+
+        def __init__(self):
+            self.calls = 0
+
+        @property
+        def spec(self):
+            return ToolSpec(
+                name=self.tool_id,
+                description="security probe",
+                required_capabilities=["managed:execute"],
+            )
+
+        def execute(self, **_params):
+            self.calls += 1
+            return ToolResult(tool_name=self.tool_id, content="ok", success=True)
+
+    @staticmethod
+    def _state(*, policy, manager, store, capability_policy=None):
+        return SimpleNamespace(
+            memory_backend=object(),
+            channel_backend=None,
+            channel_bridge=None,
+            knowledge_db_path=None,
+            capability_policy=capability_policy,
+            policy_enforcer=policy,
+            confirmation_manager=manager,
+            confirmation_store=store,
+            audit_logger=None,
+        )
+
+    def test_lightweight_system_reuses_server_security_instances(self):
+        from openjarvis.server.agent_manager_routes import _LightweightSystem
+
+        policy = PolicyEnforcer()
+        store = ConfirmationStore()
+        manager = ConfirmationManager(store=store)
+        capability_policy = MagicMock()
+        runtime = self._state(
+            policy=policy,
+            manager=manager,
+            store=store,
+            capability_policy=capability_policy,
+        )
+        system = _LightweightSystem(
+            MagicMock(),
+            "model",
+            config=SimpleNamespace(),
+            runtime=runtime,
+        )
+
+        assert system.capability_policy is capability_policy
+        assert system.policy_enforcer is policy
+        assert system.confirmation_manager is manager
+        assert system.confirmation_store is store
+        assert system.requires_secure_tool_execution is True
+
+    def test_deep_research_gateway_blocks_deny_and_keeps_agent_id(self):
+        from openjarvis.agents.deep_research import DeepResearchAgent
+        from openjarvis.server.agent_manager_routes import (
+            _secure_managed_agent_executor,
+        )
+
+        tool = self._CountingTool()
+        policy = PolicyEnforcer()
+        policy.register_tool(ToolPolicyConfig(tool_name=tool.tool_id, allowed=False))
+        store = ConfirmationStore()
+        agent = DeepResearchAgent(MagicMock(), "model", tools=[tool])
+        gateway = _secure_managed_agent_executor(
+            agent,
+            app_state=self._state(
+                policy=policy,
+                manager=ConfirmationManager(store=store),
+                store=store,
+            ),
+            agent_id="managed-agent-42",
+        )
+
+        result = gateway.execute(
+            ToolCall(id="call-1", name=tool.tool_id, arguments="{}")
+        )
+        assert result.success is False
+        assert tool.calls == 0
+        assert agent._executor._agent_id == "managed-agent-42"
+        assert agent._executor._interactive is False
+
+    def test_gateway_creates_agent_bound_pending_action(self):
+        from openjarvis.agents.deep_research import DeepResearchAgent
+        from openjarvis.server.agent_manager_routes import (
+            _secure_managed_agent_executor,
+        )
+
+        tool = self._CountingTool()
+        policy = PolicyEnforcer()
+        policy.register_tool(
+            ToolPolicyConfig(tool_name=tool.tool_id, requires_confirmation=True)
+        )
+        store = ConfirmationStore()
+        manager = ConfirmationManager(store=store)
+        agent = DeepResearchAgent(MagicMock(), "model", tools=[tool])
+        gateway = _secure_managed_agent_executor(
+            agent,
+            app_state=self._state(policy=policy, manager=manager, store=store),
+            agent_id="managed-agent-99",
+        )
+
+        result = gateway.execute(
+            ToolCall(id="call-2", name=tool.tool_id, arguments="{}")
+        )
+        assert result.success is False
+        assert tool.calls == 0
+        action = manager.get(result.metadata["action_id"])
+        assert action.agent_id == "managed-agent-99"
+
+    def test_capability_deny_prevents_tool_execution(self):
+        from openjarvis.agents.deep_research import DeepResearchAgent
+        from openjarvis.server.agent_manager_routes import (
+            _secure_managed_agent_executor,
+        )
+
+        tool = self._CountingTool()
+        policy = PolicyEnforcer()
+        store = ConfirmationStore()
+        capability_policy = MagicMock()
+        capability_policy.check.return_value = False
+        agent = DeepResearchAgent(MagicMock(), "model", tools=[tool])
+        gateway = _secure_managed_agent_executor(
+            agent,
+            app_state=self._state(
+                policy=policy,
+                manager=ConfirmationManager(store=store),
+                store=store,
+                capability_policy=capability_policy,
+            ),
+            agent_id="managed-agent-capability",
+        )
+
+        result = gateway.execute(
+            ToolCall(id="call-3", name=tool.tool_id, arguments="{}")
+        )
+        assert result.success is False
+        assert tool.calls == 0
+        capability_policy.check.assert_called_once_with(
+            "managed-agent-capability", "managed:execute", tool.tool_id
+        )
+
+    def test_partial_security_state_fails_closed(self):
+        from openjarvis.agents.deep_research import DeepResearchAgent
+        from openjarvis.server.agent_manager_routes import (
+            _secure_managed_agent_executor,
+        )
+
+        agent = DeepResearchAgent(MagicMock(), "model", tools=[])
+        with pytest.raises(RuntimeError, match="requires the shared"):
+            _secure_managed_agent_executor(
+                agent,
+                app_state=SimpleNamespace(policy_enforcer=PolicyEnforcer()),
+                agent_id="managed-agent-partial",
+            )
 
 
 @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")

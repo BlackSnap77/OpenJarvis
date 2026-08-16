@@ -239,11 +239,26 @@ class _LightweightSystem:
         self.mcp_tools: list[Any] = []
         self._mcp_clients: list[Any] = []
         self.knowledge_db_path = None
+        self.capability_policy = None
+        self.policy_enforcer = None
+        self.confirmation_manager = None
+        self.confirmation_store = None
+        self.audit_logger = None
+        # This facade is only created by HTTP managed-runtime routes.  Those
+        # routes must not silently fall back to a raw ToolExecutor.
+        self.requires_secure_tool_execution = runtime is not None
         if runtime is not None:
             self.channel_backend = getattr(runtime, "channel_backend", None) or getattr(
                 runtime, "channel_bridge", None
             )
             self.knowledge_db_path = getattr(runtime, "knowledge_db_path", None)
+            self.capability_policy = getattr(runtime, "capability_policy", None)
+            self.policy_enforcer = getattr(runtime, "policy_enforcer", None)
+            self.confirmation_manager = getattr(
+                runtime, "confirmation_manager", None
+            )
+            self.confirmation_store = getattr(runtime, "confirmation_store", None)
+            self.audit_logger = getattr(runtime, "audit_logger", None)
 
     def get_managed_agent_mcp_tools(self) -> tuple[list[Any], list[Any]]:
         """Lazily discover MCP tools only after the agent allows them."""
@@ -316,6 +331,65 @@ def _make_lightweight_system(
     except Exception:
         pass
     return _LightweightSystem(engine, model, config, runtime)
+
+
+def _managed_security_components(app_state: Any) -> tuple[Any, Any, Any, Any, Any]:
+    """Read the shared server security context and reject partial wiring."""
+    capability_policy = getattr(app_state, "capability_policy", None)
+    policy_enforcer = getattr(app_state, "policy_enforcer", None)
+    confirmation_manager = getattr(app_state, "confirmation_manager", None)
+    confirmation_store = getattr(app_state, "confirmation_store", None)
+    audit_logger = getattr(app_state, "audit_logger", None)
+    if (
+        policy_enforcer is None
+        or confirmation_manager is None
+        or confirmation_store is None
+    ):
+        raise RuntimeError(
+            "Managed server runtime requires the shared PolicyEnforcer, "
+            "ConfirmationManager, and ConfirmationStore."
+        )
+    return (
+        capability_policy,
+        policy_enforcer,
+        confirmation_manager,
+        confirmation_store,
+        audit_logger,
+    )
+
+
+def _secure_managed_agent_executor(
+    agent: Any,
+    *,
+    app_state: Any,
+    agent_id: str,
+) -> Any:
+    """Wrap one agent-owned executor with the shared security components."""
+    executor = getattr(agent, "_executor", None)
+    if executor is None:
+        raise RuntimeError("Managed agent has no ToolExecutor to secure.")
+    (
+        capability_policy,
+        policy_enforcer,
+        confirmation_manager,
+        _confirmation_store,
+        audit_logger,
+    ) = _managed_security_components(app_state)
+    executor._agent_id = agent_id
+    executor._capability_policy = capability_policy
+    executor._policy_enforcer = policy_enforcer
+    executor._confirmation_manager = confirmation_manager
+
+    from openjarvis.tools.secure_gateway import SecureToolGateway
+
+    gateway = SecureToolGateway(
+        executor,
+        policy_enforcer=policy_enforcer,
+        confirmation_manager=confirmation_manager,
+        audit_logger=audit_logger,
+    )
+    agent._execution_gateway = gateway
+    return gateway
 
 
 def _parse_param_count(model_name: str) -> float:
@@ -977,8 +1051,11 @@ async def _stream_managed_agent(
                     tools=dr_tools,
                     max_turns=int(config.get("max_turns", 8)),
                     temperature=float(config.get("temperature", 0.3)),
-                    interactive=True,
-                    confirm_callback=lambda _prompt: True,
+                )
+                _secure_managed_agent_executor(
+                    dr_agent,
+                    app_state=app_state,
+                    agent_id=agent_id,
                 )
                 if resolved_toolkit.mcp_clients:
                     dr_agent._mcp_clients = resolved_toolkit.mcp_clients
@@ -1241,14 +1318,29 @@ async def _stream_managed_agent(
         stream_kwargs["tools"] = resolved_toolkit.openai_specs
 
     from openjarvis.tools._stubs import ToolExecutor
+    from openjarvis.tools.secure_gateway import SecureToolGateway
 
     resolved_by_name = resolved_toolkit.by_name
+    (
+        capability_policy,
+        policy_enforcer,
+        confirmation_manager,
+        _confirmation_store,
+        audit_logger,
+    ) = _managed_security_components(app_state)
     stream_tool_executor = ToolExecutor(
         tools=resolved_toolkit.instances,
         bus=bus,
-        interactive=True,
-        confirm_callback=lambda _prompt: True,
-        policy_enforcer=getattr(app_state, "policy_enforcer", None),
+        capability_policy=capability_policy,
+        agent_id=agent_id,
+        policy_enforcer=policy_enforcer,
+        confirmation_manager=confirmation_manager,
+    )
+    stream_tool_gateway = SecureToolGateway(
+        stream_tool_executor,
+        policy_enforcer=policy_enforcer,
+        confirmation_manager=confirmation_manager,
+        audit_logger=audit_logger,
     )
 
     # Forward any per-agent sampler params (repetition_penalty, top_p, …) so
@@ -1439,7 +1531,7 @@ async def _stream_managed_agent(
 
                     try:
                         if tool_name in resolved_by_name:
-                            result = stream_tool_executor.execute(
+                            result = stream_tool_gateway.execute(
                                 MsgToolCall(
                                     id=tc["id"],
                                     name=tool_name,
@@ -1795,8 +1887,11 @@ def create_agent_manager_router(
                                     engine=engine,
                                     model=getattr(engine, "_model", ""),
                                     tools=tools,
-                                    interactive=True,
-                                    confirm_callback=lambda _prompt: True,
+                                )
+                                _secure_managed_agent_executor(
+                                    agent_inst,
+                                    app_state=request.app.state,
+                                    agent_id=agent_id,
                                 )
 
                                 def handler(text: str) -> str:
@@ -1868,8 +1963,11 @@ def create_agent_manager_router(
                                     engine=engine,
                                     model=model_name,
                                     tools=tools,
-                                    interactive=True,
-                                    confirm_callback=lambda _prompt: True,
+                                )
+                                _secure_managed_agent_executor(
+                                    dr_agent,
+                                    app_state=request.app.state,
+                                    agent_id=agent_id,
                                 )
                         bus = getattr(request.app.state, "bus", None)
                         if bus is None:

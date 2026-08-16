@@ -161,7 +161,11 @@ def create_app(
     agent_scheduler=None,
     mcp_tools=None,
     mcp_clients=None,
+    capability_policy=None,
     policy_enforcer=None,
+    confirmation_manager=None,
+    confirmation_store=None,
+    audit_logger=None,
     secure_tool_gateway=None,
     api_key: str = "",
     webhook_config: dict | None = None,
@@ -237,7 +241,11 @@ def create_app(
     app.state.agent_manager = agent_manager
     app.state.agent_scheduler = agent_scheduler
     app.state.mcp_tools = list(mcp_tools or [])
+    app.state.capability_policy = capability_policy
     app.state.policy_enforcer = policy_enforcer
+    app.state.confirmation_manager = confirmation_manager
+    app.state.confirmation_store = confirmation_store
+    app.state.audit_logger = audit_logger
     app.state.secure_tool_gateway = secure_tool_gateway
     app.state._mcp_discovery_lock = threading.Lock()
     app.state._mcp_clients_lock = threading.Lock()

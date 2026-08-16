@@ -529,11 +529,19 @@ class AgentExecutor:
 
             inner_executor._policy_enforcer = policy_enforcer
             inner_executor._confirmation_manager = confirmation_manager
+            inner_executor._capability_policy = getattr(
+                self._system, "capability_policy", None
+            )
 
             # The managed agent owns this ToolExecutor, so the gateway must
             # wrap this exact executor rather than the scheduler's separate
             # system executor.
             if policy_enforcer is None and confirmation_manager is None:
+                if getattr(self._system, "requires_secure_tool_execution", False):
+                    raise FatalError(
+                        "Managed server runtime requires PolicyEnforcer and "
+                        "ConfirmationManager"
+                    )
                 # Legacy/test systems without the central security layer keep
                 # the historical execution path.
                 agent_instance._execution_gateway = inner_executor
