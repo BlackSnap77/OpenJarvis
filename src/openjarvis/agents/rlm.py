@@ -17,7 +17,7 @@ from openjarvis.agents.prompt_loader import (
     load_few_shot_exemplars,
     load_system_prompt_override,
 )
-from openjarvis.agents.rlm_repl import RLMRepl
+from openjarvis.agents.rlm_repl import RLMRepl, TrustedReplRunner
 from openjarvis.core.events import EventBus
 from openjarvis.core.registry import AgentRegistry
 from openjarvis.core.types import Message, Role, ToolCall, ToolResult
@@ -124,6 +124,7 @@ class RLMAgent(ToolUsingAgent):
         system_prompt: Optional[str] = None,
         interactive: bool = False,
         confirm_callback=None,
+        repl_runner: Optional[TrustedReplRunner] = None,
     ) -> None:
         super().__init__(
             engine,
@@ -144,6 +145,10 @@ class RLMAgent(ToolUsingAgent):
         self._sub_max_tokens = sub_max_tokens
         self._max_output_chars = max_output_chars
         self._custom_system_prompt = system_prompt
+        # No default exists by design.  Production callers must explicitly
+        # inject the future isolated runner; otherwise generated Python is not
+        # executed in this process.
+        self._repl_runner = repl_runner
 
     # ------------------------------------------------------------------
     # Main run loop
@@ -188,6 +193,7 @@ class RLMAgent(ToolUsingAgent):
             llm_batch_fn=self._make_batch_query,
             tool_call_fn=self._execute_tool_from_repl if self._executor else None,
             tool_arg_names=self._tool_arg_names(),
+            execution_runner=self._repl_runner,
             max_output_chars=self._max_output_chars,
         )
 
@@ -245,8 +251,15 @@ class RLMAgent(ToolUsingAgent):
                     metadata=total_usage,
                 )
 
-            # Execute code in REPL
-            output = repl.execute(code)
+            # Fail closed before invoking the REPL.  In particular, do not
+            # allow RLMRepl to regain a future in-process fallback.
+            if self._repl_runner is None:
+                output = (
+                    "Error: RLM Python REPL execution is disabled: no trusted "
+                    "isolated runner is configured."
+                )
+            else:
+                output = repl.execute(code)
 
             if self._repl_tool_results:
                 all_tool_results.extend(self._repl_tool_results)

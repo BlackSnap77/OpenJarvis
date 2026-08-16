@@ -8,8 +8,6 @@ sub-LM calls.
 
 from __future__ import annotations
 
-import io
-from contextlib import redirect_stderr, redirect_stdout
 from typing import Any, Callable, Dict, List, Optional
 
 # Safe stdlib modules pre-injected into the REPL namespace
@@ -40,6 +38,17 @@ _BLOCKED_PATTERNS = [
     "urllib",
 ]
 
+# A runner is deliberately injected by the owning runtime.  It is expected to
+# execute code outside the OpenJarvis process; Phase 2.8b will provide that
+# isolated implementation.  The REPL itself must never supply an in-process
+# fallback.
+TrustedReplRunner = Callable[[str, Dict[str, Any], int], str]
+
+_EXECUTION_DISABLED_MESSAGE = (
+    "Error: RLM Python REPL execution is disabled: no trusted isolated "
+    "runner is configured."
+)
+
 
 class RLMRepl:
     """Sandboxed Python REPL with persistent namespace for the RLM agent.
@@ -60,6 +69,7 @@ class RLMRepl:
         llm_batch_fn: Optional[Callable[[List[str]], List[str]]] = None,
         tool_call_fn: Optional[Callable[[str, Dict[str, Any]], str]] = None,
         tool_arg_names: Optional[Dict[str, Optional[str]]] = None,
+        execution_runner: Optional[TrustedReplRunner] = None,
         *,
         max_output_chars: int = 10000,
     ) -> None:
@@ -67,6 +77,7 @@ class RLMRepl:
         self._terminated = False
         self._final_value: Any = None
         self._tool_call_fn = tool_call_fn
+        self._execution_runner = execution_runner
 
         # Build namespace
         self._namespace: Dict[str, Any] = {}
@@ -201,35 +212,27 @@ class RLMRepl:
         return None
 
     def execute(self, code: str) -> str:
-        """Execute *code* in the persistent namespace and return captured stdout.
+        """Request execution from an explicitly injected isolated runner.
 
-        Raises are caught and returned as error strings.
+        This class intentionally has no in-process execution fallback.  The
+        historical substring blacklist remains defence in depth only; it is
+        never an authorization decision for Python execution.
         """
-        # Security check
+        if self._execution_runner is None:
+            return _EXECUTION_DISABLED_MESSAGE
+
         violation = self.security_check(code)
         if violation is not None:
             return f"Error: {violation}"
 
-        stdout_buf = io.StringIO()
-        stderr_buf = io.StringIO()
-
         try:
-            with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
-                exec(code, self._namespace)  # noqa: S102
+            return self._execution_runner(
+                code,
+                self._namespace,
+                self._max_output_chars,
+            )
         except Exception as exc:
-            error_msg = f"{type(exc).__name__}: {exc}"
-            return error_msg
-
-        output = stdout_buf.getvalue()
-        err_output = stderr_buf.getvalue()
-        if err_output:
-            output += ("\n" if output else "") + err_output
-
-        # Truncate if needed
-        if len(output) > self._max_output_chars:
-            output = output[: self._max_output_chars] + "\n... (output truncated)"
-
-        return output
+            return f"{type(exc).__name__}: {exc}"
 
     # ------------------------------------------------------------------
     # Namespace access
@@ -244,4 +247,4 @@ class RLMRepl:
         return self._namespace.get(name)
 
 
-__all__ = ["RLMRepl"]
+__all__ = ["RLMRepl", "TrustedReplRunner"]

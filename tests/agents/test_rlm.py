@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import MagicMock
 
 from openjarvis.agents._stubs import AgentContext
@@ -14,6 +16,26 @@ from openjarvis.tools._stubs import BaseTool, ToolSpec
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _trusted_test_runner(code, namespace, max_output_chars):
+    """Test-only runner; production never receives an in-process fallback."""
+    stdout_buf = io.StringIO()
+    stderr_buf = io.StringIO()
+    with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+        exec(code, namespace)  # noqa: S102
+    output = stdout_buf.getvalue()
+    error_output = stderr_buf.getvalue()
+    if error_output:
+        output += ("\n" if output else "") + error_output
+    if len(output) > max_output_chars:
+        output = output[:max_output_chars] + "\n... (output truncated)"
+    return output
+
+
+def _rlm_agent(*args, **kwargs):
+    kwargs.setdefault("repl_runner", _trusted_test_runner)
+    return RLMAgent(*args, **kwargs)
 
 
 class _CalcStub(BaseTool):
@@ -131,7 +153,7 @@ class TestRLMAgentRegistration:
 
     def test_agent_id(self):
         engine = _make_engine()
-        agent = RLMAgent(engine, "test-model")
+        agent = _rlm_agent(engine, "test-model")
         assert agent.agent_id == "rlm"
 
 
@@ -173,7 +195,7 @@ class TestRLMDirectAnswer:
     def test_no_code_block_returns_content(self):
         """When model returns no code block, treat content as final answer."""
         engine = _make_engine("The answer is 42.")
-        agent = RLMAgent(engine, "test-model")
+        agent = _rlm_agent(engine, "test-model")
         result = agent.run("What is the answer?")
         assert result.content == "The answer is 42."
         assert result.turns == 1
@@ -191,7 +213,7 @@ class TestRLMFinalTermination:
             "model": "test-model",
             "finish_reason": "stop",
         }
-        agent = RLMAgent(engine, "test-model")
+        agent = _rlm_agent(engine, "test-model")
         result = agent.run("Test")
         assert result.content == "hello world"
         assert len(result.tool_results) == 1
@@ -206,7 +228,7 @@ class TestRLMFinalTermination:
             "model": "test-model",
             "finish_reason": "stop",
         }
-        agent = RLMAgent(engine, "test-model")
+        agent = _rlm_agent(engine, "test-model")
         result = agent.run("Test")
         assert result.content == "42"
 
@@ -214,14 +236,14 @@ class TestRLMFinalTermination:
 class TestRLMContextInjection:
     def test_context_from_metadata(self):
         engine = _make_engine("The answer is 42.")
-        agent = RLMAgent(engine, "test-model")
+        agent = _rlm_agent(engine, "test-model")
         ctx = AgentContext(metadata={"context": "Some long document text."})
         result = agent.run("Summarize", context=ctx)
         assert result.content == "The answer is 42."
 
     def test_context_from_memory_results(self):
         engine = _make_engine("Summary.")
-        agent = RLMAgent(engine, "test-model")
+        agent = _rlm_agent(engine, "test-model")
         ctx = AgentContext(memory_results=["chunk1", "chunk2"])
         result = agent.run("Summarize", context=ctx)
         assert result.content == "Summary."
@@ -260,7 +282,7 @@ class TestRLMSubLMCalls:
                 "finish_reason": "stop",
             },
         ]
-        agent = RLMAgent(engine, "test-model")
+        agent = _rlm_agent(engine, "test-model")
         result = agent.run("Calculate")
         assert result.content == "4"
         # engine.generate should be called at least twice (root + sub)
@@ -296,7 +318,7 @@ class TestRLMMultiTurn:
                 "finish_reason": "stop",
             },
         ]
-        agent = RLMAgent(engine, "test-model")
+        agent = _rlm_agent(engine, "test-model")
         result = agent.run("Calculate")
         assert result.content == "20"
         assert result.turns == 2
@@ -312,7 +334,7 @@ class TestRLMMultiTurn:
             "model": "test-model",
             "finish_reason": "stop",
         }
-        agent = RLMAgent(engine, "test-model", max_turns=3)
+        agent = _rlm_agent(engine, "test-model", max_turns=3)
         result = agent.run("Loop")
         assert result.turns == 3
         assert result.metadata.get("max_turns_exceeded") is True
@@ -327,7 +349,7 @@ class TestRLMMultiTurn:
             "model": "test-model",
             "finish_reason": "stop",
         }
-        agent = RLMAgent(engine, "test-model", max_turns=2)
+        agent = _rlm_agent(engine, "test-model", max_turns=2)
         result = agent.run("Work")
         assert result.content == "partial"
         assert result.metadata.get("max_turns_exceeded") is True
@@ -337,7 +359,7 @@ class TestRLMEventBus:
     def test_agent_events(self):
         bus = EventBus(record_history=True)
         engine = _make_engine("Direct answer.")
-        agent = RLMAgent(engine, "test-model", bus=bus)
+        agent = _rlm_agent(engine, "test-model", bus=bus)
         agent.run("Hello")
         event_types = [e.event_type for e in bus.history]
         assert EventType.AGENT_TURN_START in event_types
@@ -353,7 +375,7 @@ class TestRLMEventBus:
             "model": "test-model",
             "finish_reason": "stop",
         }
-        agent = RLMAgent(engine, "test-model", bus=bus)
+        agent = _rlm_agent(engine, "test-model", bus=bus)
         agent.run("Test")
         event_types = [e.event_type for e in bus.history]
         assert EventType.AGENT_TURN_START in event_types
@@ -409,7 +431,7 @@ class TestRLMSubLMWithTools:
                 "finish_reason": "stop",
             },
         ]
-        agent = RLMAgent(engine, "test-model", tools=[_CalcStub()])
+        agent = _rlm_agent(engine, "test-model", tools=[_CalcStub()])
         result = agent.run("Calculate")
         assert result.content == "The answer is 4."
 
@@ -436,7 +458,7 @@ class TestRLMDirectToolBridge:
                 "finish_reason": "stop",
             }
         ]
-        agent = RLMAgent(engine, "test-model", tools=[_FileReadStub()])
+        agent = _rlm_agent(engine, "test-model", tools=[_FileReadStub()])
         result = agent.run("Read Cargo")
         assert result.content == "read ok"
         assert any(tr.tool_name == "file_read" for tr in result.tool_results)
@@ -465,7 +487,7 @@ class TestRLMDirectToolBridge:
                 "finish_reason": "stop",
             }
         ]
-        agent = RLMAgent(engine, "test-model", tools=[_FileReadStub()])
+        agent = _rlm_agent(engine, "test-model", tools=[_FileReadStub()])
         result = agent.run("Read file head")
         assert result.content == "line1\nline2\n"
         assert any(tr.tool_name == "file_read" for tr in result.tool_results)
@@ -490,7 +512,7 @@ class TestRLMDirectToolBridge:
                 "finish_reason": "stop",
             }
         ]
-        agent = RLMAgent(engine, "test-model", tools=[_FileReadStub()])
+        agent = _rlm_agent(engine, "test-model", tools=[_FileReadStub()])
         result = agent.run("Read file chunk")
         assert result.content == "line2\nline3\nline4\n"
         assert any(tr.tool_name == "file_read" for tr in result.tool_results)
@@ -524,7 +546,7 @@ class TestRLMBlockedCode:
                 "finish_reason": "stop",
             },
         ]
-        agent = RLMAgent(engine, "test-model")
+        agent = _rlm_agent(engine, "test-model")
         result = agent.run("Test")
         assert result.content == "I apologize, let me answer directly."
         # The blocked code should produce a failed tool result
@@ -539,7 +561,7 @@ class TestRLMToolSectionInjection:
     def test_system_prompt_includes_tool_section(self):
         """Tools provided -> system prompt includes descriptions."""
         engine = _make_engine("Direct answer.")
-        agent = RLMAgent(engine, "test-model", tools=[_CalcStub()])
+        agent = _rlm_agent(engine, "test-model", tools=[_CalcStub()])
         agent.run("Hello")
         call_args = engine.generate.call_args
         messages = call_args[0][0]
@@ -551,7 +573,7 @@ class TestRLMToolSectionInjection:
     def test_system_prompt_no_tool_section_without_tools(self):
         """No tools -> system prompt has no tool section."""
         engine = _make_engine("Direct answer.")
-        agent = RLMAgent(engine, "test-model")
+        agent = _rlm_agent(engine, "test-model")
         agent.run("Hello")
         call_args = engine.generate.call_args
         messages = call_args[0][0]
@@ -569,7 +591,7 @@ class TestRLMReplResults:
             "model": "test-model",
             "finish_reason": "stop",
         }
-        agent = RLMAgent(engine, "test-model")
+        agent = _rlm_agent(engine, "test-model")
         result = agent.run("Test")
         assert len(result.tool_results) == 1
         assert result.tool_results[0].tool_name == "rlm_repl"
