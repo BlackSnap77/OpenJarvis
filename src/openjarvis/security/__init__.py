@@ -15,6 +15,7 @@ from openjarvis.security.file_policy import (
     is_sensitive_file,
 )
 from openjarvis.security.guardrails import GuardrailsEngine, SecurityBlockError
+from openjarvis.security.runtime import ActorContext, RuntimeMode, SecurityRuntime
 from openjarvis.security.scanner import PIIScanner, SecretScanner
 from openjarvis.security.ssrf import check_ssrf, is_private_ip
 from openjarvis.security.types import (
@@ -119,17 +120,20 @@ def setup_security(
 
 
 __all__ = [
+    "ActorContext",
     "AuditLogger",
     "BaseScanner",
     "DEFAULT_SENSITIVE_PATTERNS",
     "GuardrailsEngine",
     "PIIScanner",
     "RedactionMode",
+    "RuntimeMode",
     "ScanFinding",
     "ScanResult",
     "SecretScanner",
     "SecurityBlockError",
     "SecurityContext",
+    "SecurityRuntime",
     "SecurityEvent",
     "SecurityEventType",
     "ThreatLevel",
